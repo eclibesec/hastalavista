@@ -600,8 +600,8 @@
         </style>
 
 <div class="n-columns-2">
-                <a href="https://link-amp-emastoto.pages.dev/" rel="nofollow noreferrer" class="login">LOGIN</a>
-                <a href="https://link-amp-emastoto.pages.dev/" rel="nofollow noreferrer" class="register">DAFTAR</a>
+                <a href="https://hami-bt9.pages.dev/ampmas" rel="nofollow noreferrer" class="login">LOGIN</a>
+                <a href="https://hami-bt9.pages.dev/ampmas" rel="nofollow noreferrer" class="register">DAFTAR</a>
                 </div>
 
     
