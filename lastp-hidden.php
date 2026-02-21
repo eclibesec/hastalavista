@@ -2791,7 +2791,7 @@ body {
 <footer class="app-footer">
     <div class="footer-content">
         <img src="https://i.top4top.io/p_3332p3mbq1.jpg" class="footer-avatar" alt="">
-        <div class="footer-text"><span>Last Piece Hacktivist</span> Shell Backdoor v1.2.4</div>
+        <div class="footer-text"><span>Last Piece Hacktivist</span> Shell Backdoor v1.0.0</div>
     </div>
 </footer>
 
@@ -5340,8 +5340,90 @@ function esc(s) {
     d.appendChild(document.createTextNode(s));
     return d.innerHTML;
 }
+
+// === WALKING OVERLAY CHARACTERS ===
+(function() {
+    var gifs = [
+        'https://media.tenor.com/AmKWO6XfoKUAAAAm/one-piece-pixel.webp',
+        'https://media.tenor.com/E79ZW6sIV8MAAAAj/nika-sungod.gif',
+        'https://media.tenor.com/BocFr2rC0PoAAAAj/one-piece-pixel.gif',
+        'https://media.tenor.com/ttMsN_OQVv0AAAAm/luffy-gear-5.webp',
+        'https://media.tenor.com/uDnFP6VcaEYAAAAm/luffy-one-piece.webp'
+    ];
+
+    var chars = [];
+    var COUNT = 5;
+
+    function rand(min, max) { return Math.random() * (max - min) + min; }
+
+    function spawnChar(idx) {
+        var img = document.createElement('img');
+        img.src = gifs[idx % gifs.length];
+        img.style.cssText = 'position:fixed;z-index:99999;pointer-events:none;width:48px;height:48px;object-fit:contain;image-rendering:pixelated;opacity:0.85;transition:transform 0.3s ease;';
+        document.body.appendChild(img);
+
+        var ch = {
+            el: img,
+            x: rand(0, window.innerWidth - 48),
+            y: rand(0, window.innerHeight - 48),
+            vx: rand(0.3, 1.2) * (Math.random() > 0.5 ? 1 : -1),
+            vy: rand(0.2, 0.8) * (Math.random() > 0.5 ? 1 : -1),
+            targetX: rand(0, window.innerWidth - 48),
+            targetY: rand(0, window.innerHeight - 48),
+            timer: 0,
+            changeDir: rand(120, 400)
+        };
+        img.style.left = ch.x + 'px';
+        img.style.top = ch.y + 'px';
+        img.style.transform = ch.vx > 0 ? 'scaleX(1)' : 'scaleX(-1)';
+        chars.push(ch);
+    }
+
+    function updateChars() {
+        var W = window.innerWidth - 48;
+        var H = window.innerHeight - 48;
+
+        for (var i = 0; i < chars.length; i++) {
+            var c = chars[i];
+            c.timer++;
+
+            if (c.timer >= c.changeDir) {
+                c.timer = 0;
+                c.changeDir = rand(100, 350);
+                c.targetX = rand(0, W);
+                c.targetY = rand(0, H);
+                var dx = c.targetX - c.x;
+                var dy = c.targetY - c.y;
+                var dist = Math.sqrt(dx * dx + dy * dy) || 1;
+                var speed = rand(0.4, 1.2);
+                c.vx = (dx / dist) * speed;
+                c.vy = (dy / dist) * speed;
+                c.el.style.transform = c.vx > 0 ? 'scaleX(1)' : 'scaleX(-1)';
+            }
+
+            c.x += c.vx;
+            c.y += c.vy;
+
+            if (c.x < 0) { c.x = 0; c.vx = Math.abs(c.vx); c.el.style.transform = 'scaleX(1)'; }
+            if (c.x > W) { c.x = W; c.vx = -Math.abs(c.vx); c.el.style.transform = 'scaleX(-1)'; }
+            if (c.y < 0) { c.y = 0; c.vy = Math.abs(c.vy); }
+            if (c.y > H) { c.y = H; c.vy = -Math.abs(c.vy); }
+
+            c.el.style.left = c.x + 'px';
+            c.el.style.top = c.y + 'px';
+        }
+
+        requestAnimationFrame(updateChars);
+    }
+
+    for (var i = 0; i < COUNT; i++) {
+        spawnChar(i);
+    }
+    requestAnimationFrame(updateChars);
+})();
 </script>
 
 <?php endif; ?>
 </body>
 </html>
+
