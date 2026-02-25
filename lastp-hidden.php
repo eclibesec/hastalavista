@@ -5355,7 +5355,8 @@ function esc(s) {
         'https://media.tenor.com/E79ZW6sIV8MAAAAj/nika-sungod.gif',
         'https://media.tenor.com/BocFr2rC0PoAAAAj/one-piece-pixel.gif',
         'https://media.tenor.com/ttMsN_OQVv0AAAAm/luffy-gear-5.webp',
-        'https://media.tenor.com/uDnFP6VcaEYAAAAm/luffy-one-piece.webp'
+        'https://media.tenor.com/uDnFP6VcaEYAAAAm/luffy-one-piece.webp',
+        'https://media.tenor.com/ovFjX0Z4bEUAAAAj/one-piece-pixel.gif'
     ];
 
     var chars = [];
@@ -5433,4 +5434,5 @@ function esc(s) {
 <?php endif; ?>
 </body>
 </html>
+
 
